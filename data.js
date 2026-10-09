@@ -1,51 +1,53 @@
-// Complete Curriculum Data from Basic to Advanced Linux Server & Enterprise Operations
+// Complete Enterprise Dataset: 8 Modules, 20 MCQs with Marking Scheme, Interactive Scenarios, and Production Projects
+
+// 1. MODULES DATA (Plain, deep explanations, examples, flags, and incident SOPs)
 const linuxCurriculum = [
   {
     id: "mod-01",
     category: "core",
     categoryLabel: "Core Linux Foundation",
-    title: "1. Linux Architecture & File System Hierarchy",
+    title: "1. Linux Architecture & File System Hierarchy (FHS)",
     icon: "fa-solid fa-sitemap",
     level: "Basic to Intermediate",
-    lead: "Master the Linux Filesystem Hierarchy Standard (FHS), Kernel vs User space, and essential file navigation for production environments.",
-    description: "In RHEL/CentOS systems, understanding where configuration files, logs, and mount points live is crucial before diagnosing any server crash.",
+    lead: "Master how the Linux Kernel interacts with hardware, syscalls, and where configuration files, logs, and device mounts live in enterprise systems.",
+    description: "In enterprise servers (RHEL/CentOS/Rocky), Linux organizes everything as a single unified hierarchical tree starting at root (`/`). Understanding which directories hold temporary runtime memory vs persistent disk storage is the first step in diagnosing server crashes.",
     keyConcepts: [
       {
-        title: "Filesystem Hierarchy Standard (FHS)",
-        text: "Unlike Windows with drive letters (C:, D:), Linux is a unified single tree beginning at `/`. Key directories: `/etc` (system configuration), `/var/log` (incident log audit trails), `/proc` & `/sys` (kernel virtual memory metrics), `/dev` (device files), `/home` (user dirs), and `/opt` (third-party vendor enterprise apps)."
+        title: "Kernel Space vs User Space",
+        text: "The Operating System is split into two realms:\n• Kernel Space: Has unrestricted direct access to hardware (CPU, RAM registers, network cards, disks). It schedules tasks and manages memory paging.\n• User Space: Where normal software, web servers, and terminal shells run. User applications cannot talk directly to hardware—they must issue System Calls (syscalls like `read()`, `write()`, `fork()`, `open()`)."
       },
       {
-        title: "Kernel vs User Space",
-        text: "The Linux Kernel handles CPU scheduling, RAM memory paging, I/O drivers, and hardware communication. User applications communicate with the kernel strictly through System Calls (syscalls like `open()`, `read()`, `fork()`)."
+        title: "Standard Directories & Their Production Purpose",
+        text: "• /etc: Contains all system and daemon configuration files (e.g. `/etc/ssh/sshd_config`, `/etc/fstab`, `/etc/resolv.conf`).\n• /var: Variable data that changes continuously. Key directory: `/var/log` where system audit, security, and application logs are stored.\n• /proc & /sys: Virtual in-memory filesystems generated on-the-fly by the Linux kernel. They take up 0 bytes of physical hard drive space. Reading `/proc/cpuinfo` or `/proc/meminfo` queries kernel RAM directly.\n• /dev: Device nodes representing physical storage disks (`/dev/sda`, `/dev/nvme0n1`) and special character devices (`/dev/null`, `/dev/urandom`).\n• /opt: Standard location for 3rd-party vendor enterprise software (e.g., Dynatrace, Splunk, custom Java JARs)."
       }
     ],
     commands: [
-      { cmd: "ls -lah /var/log", desc: "List all logs with human-readable permissions and hidden files" },
-      { cmd: "df -Th", desc: "Display file system disk space and filesystem type (xfs/ext4)" },
-      { cmd: "du -sh /var/log/* | sort -hr | head -n 5", desc: "Find top 5 biggest space-consuming logs in /var/log" },
-      { cmd: "pwd && which systemctl", desc: "Print current working directory and path of binary" },
-      { cmd: "stat /etc/passwd", desc: "Inspect detailed inode, file size, access/modify timestamps" },
-      { cmd: "tree -L 2 /etc/systemd", desc: "Display directory structure of systemd up to depth 2" }
+      { cmd: "ls -lah /var/log", desc: "List all logs with permissions, file owners, hidden files, and human-readable sizes (K, M, G)" },
+      { cmd: "df -Th", desc: "Display all mounted filesystems, total sizes, free space, and filesystem types (XFS / EXT4)" },
+      { cmd: "du -sh /var/log/* | sort -hr | head -n 5", desc: "Scan and display the top 5 largest log files in /var/log consuming disk space" },
+      { cmd: "stat /etc/fstab", desc: "Inspect detailed inode number, file size, access, modify, and status change timestamps" },
+      { cmd: "uname -r", desc: "Display exact Linux Kernel version running on the server" },
+      { cmd: "cat /proc/sys/fs/file-nr", desc: "Check allocated file handles vs system maximum open file descriptors" }
     ],
     realWorldScenario: {
       title: "Scenario 1: Root Partition Filled to 100% (/ is full)",
-      problem: "A critical monitoring alert fires at 2 AM: `/dev/mapper/rhel-root` is at 100% capacity. Services are crashing because they cannot write PID files or temp logs.",
+      problem: "At 2 AM, the on-call monitoring alert triggers: `/dev/mapper/rhel-root` is at 100% capacity. Daemons are failing to start because they cannot write temporary lock files.",
       steps: [
-        "Run `df -h` to confirm which mount point is at 100%.",
-        "Run `cd / && du -xhd1 | sort -hr | head -10` (the `-x` flag ensures you don't scan other mounted disks like `/boot` or NFS shares).",
-        "Drill down into `/var/log` or `/var/cache` to locate bloated unrotated logs.",
-        "Clear or compress safely without breaking open file descriptors: `> /var/log/app.log` (do NOT run `rm` on a file held open by a running daemon!).",
-        "Verify with `lsof | grep deleted` if disk space didn't free up immediately."
+        "Run `df -h` to pinpoint which partition is at 100%.",
+        "Run `cd / && du -xhd1 | sort -hr | head -10` (the `-x` flag prevents scanning external mountpoints or network NFS shares).",
+        "Locate bloated unrotated logs in `/var/log` or dumped core files in `/var/crash`.",
+        "Crucial Rule: Do NOT run `rm` on a log file currently being written by a running daemon! Instead, truncate it safely: `> /var/log/app.log`.",
+        "If you already deleted it with `rm` but space did not free up, run `lsof | grep '(deleted)'` to identify the holding PID and restart that service."
       ]
     },
     interviewQuestions: [
       {
-        q: "Why does `df -h` still show 100% disk usage even after deleting a huge 20GB log file with `rm`?",
-        a: "Because a running process still holds an open file handle (file descriptor) to that deleted file. In Linux, disk blocks are only marked free when the inode reference count drops to 0. Run `lsof +L1` or `lsof | grep '(deleted)'` to find the offending PID, then either reload/restart that service or truncate the file descriptor via `/proc/<PID>/fd/<FD>`."
+        q: "Why does `df -h` still report 100% disk usage even after you deleted a 20GB log file with `rm`?",
+        a: "In Linux, deleting a file with `rm` only unlinks the filename from directory entry. If a running process still has that file open, its Inode reference count remains greater than 0, and the storage blocks are NOT freed. Run `lsof +L1` or `lsof | grep deleted` to find the process ID (PID), then either reload the service or restart it."
       },
       {
         q: "What is the difference between `/proc` and `/sys`?",
-        a: "Both are pseudo/virtual filesystems generated directly by the kernel in RAM. `/proc` mainly contains process-specific states (`/proc/<pid>`) and runtime kernel parameters (like `/proc/sys/vm/swappiness`), whereas `/sys` (sysfs) provides a unified view of physical hardware, bus devices, and kernel drivers."
+        a: "Both are pseudo virtual filesystems created in RAM by the kernel. `/proc` primarily represents process runtime data (`/proc/<PID>`) and kernel tuneables (`/proc/sys/`), whereas `/sys` (sysfs) provides a structured hierarchy of physical hardware buses, drivers, and network interface adapters."
       }
     ]
   },
@@ -54,53 +56,53 @@ const linuxCurriculum = [
     id: "mod-02",
     category: "core",
     categoryLabel: "Core Linux Foundation",
-    title: "2. Permissions, ACLs & Ownership Security",
+    title: "2. Permissions, SUID/SGID, Sticky Bit & POSIX ACLs",
     icon: "fa-solid fa-user-shield",
     level: "Intermediate",
-    lead: "Understand UNIX standard permissions (rwx), SUID, SGID, Sticky Bit, and POSIX Access Control Lists (ACLs) in enterprise RHEL.",
-    description: "Enterprise environments require strict principle of least privilege. In production, misconfigured chmod 777 is an audit violation and major security risk.",
+    lead: "Understand UNIX standard permissions (UGO/rwx), special permission bits, and extended Access Control Lists (ACLs) for enterprise compliance.",
+    description: "In production enterprise environments, setting `chmod 777` is an immediate security and audit violation. System administrators must use fine-grained groups, SGID inheritance, and POSIX ACLs to enforce least privilege.",
     keyConcepts: [
       {
-        title: "Standard Permissions (UGO / rwx)",
-        text: "User, Group, Others with octal values: Read (4), Write (2), Execute (1). Total 7 = rwx. Default permissions are determined by the `umask` (commonly 0022 or 0027)."
+        title: "Standard Octal Permissions (UGO)",
+        text: "Every file has User (owner), Group, and Others permissions. Read = 4, Write = 2, Execute = 1. Therefore: 7 = rwx, 6 = rw-, 5 = r-x, 4 = r--. The default permission applied when creating new files or directories is controlled by the `umask` (standard default is 0022 or 0027)."
       },
       {
-        title: "Special Permissions: SUID, SGID & Sticky Bit",
-        text: "SUID (4xxx) allows binary execution with owner's privileges (e.g. `/usr/bin/passwd`). SGID (2xxx) forces newly created files to inherit parent directory's group. Sticky Bit (1xxx, e.g. `/tmp`) allows only file owners or root to delete their own files."
+        title: "Special Permission Bits (SUID, SGID, Sticky Bit)",
+        text: "• SUID (4xxx): When set on an executable binary, any user running the binary executes it with the privileges of the file owner (e.g. `/usr/bin/passwd` runs as root).\n• SGID (2xxx): When set on a directory, any new file created inside that directory automatically inherits the parent directory's group ownership rather than the user's primary group.\n• Sticky Bit (1xxx): When set on a directory (e.g. `/tmp`), users can only delete or rename files that they personally own."
       },
       {
         title: "POSIX Access Control Lists (ACLs)",
-        text: "When standard user/group permissions aren't flexible enough (e.g., granting read access to a specific auditor user without changing group ownership), ACLs (`getfacl`, `setfacl`) provide fine-grained multi-user authorization."
+        text: "Standard Linux permissions only support one user owner and one group owner. ACLs allow you to grant read/write permissions to specific additional users or groups without changing the base ownership (`getfacl` to read, `setfacl` to modify)."
       }
     ],
     commands: [
-      { cmd: "chmod 750 /opt/myapp/start.sh", desc: "User rwx, Group r-x, Others none" },
-      { cmd: "chown -R appuser:appgroup /opt/myapp", desc: "Recursively change ownership of application directory" },
-      { cmd: "chmod 2770 /shared/project", desc: "Set SGID so all newly created files inherit 'project' group" },
-      { cmd: "chmod +t /shared/public_drop", desc: "Enable sticky bit on directory" },
-      { cmd: "getfacl /var/log/audit/audit.log", desc: "View extended ACL rules on audit log" },
-      { cmd: "setfacl -m u:rajiv:r-x /var/log/audit", desc: "Grant user 'rajiv' specific read-execute ACL without modifying group" },
-      { cmd: "setfacl -b /var/log/audit", desc: "Remove all extended ACL rules from directory" }
+      { cmd: "chmod 750 /opt/myapp/start.sh", desc: "Set User=rwx (7), Group=r-x (5), Others=none (0)" },
+      { cmd: "chown -R appuser:appgroup /opt/myapp", desc: "Recursively change user and group ownership on directory" },
+      { cmd: "chmod 2770 /shared/finance", desc: "Enable SGID bit (2) on folder so new files inherit 'finance' group" },
+      { cmd: "chmod +t /shared/public", desc: "Enable Sticky Bit so users cannot delete files created by other colleagues" },
+      { cmd: "getfacl /var/log/secure", desc: "View extended Access Control Lists and specific user permissions on file" },
+      { cmd: "setfacl -m u:auditor:r /var/log/secure", desc: "Grant read-only ACL to user 'auditor' without changing file ownership" },
+      { cmd: "setfacl -b /var/log/secure", desc: "Wipe all extended ACL rules from file back to standard POSIX" }
     ],
     realWorldScenario: {
-      title: "Scenario 2: Developer cannot write to shared staging directory",
-      problem: "Developer 'dev1' cannot save files to `/var/www/html/app`, getting 'Permission Denied', even though they belong to group 'webdev'.",
+      title: "Scenario 2: Developer receives 'Permission Denied' on shared staging folder",
+      problem: "Developer 'dev1' was added to the 'webteam' group, but cannot create files inside `/var/www/staging`, getting 'Permission Denied'.",
       steps: [
-        "Inspect directory permissions: `ls -ld /var/www/html/app`.",
-        "Check developer groups: `id dev1` to ensure membership in 'webdev'.",
-        "If they were just added to the group, explain that active SSH sessions must log out and log back in, or run `newgrp webdev` to refresh token.",
-        "Ensure group write permission is active: `chmod g+w /var/www/html/app`.",
-        "Set SGID so newly created files remain writable by everyone in 'webdev': `chmod 2775 /var/www/html/app`."
+        "Check folder permissions: `ls -ld /var/www/staging`.",
+        "Check developer groups: `id dev1`. If 'webteam' is listed, check if the developer logged out and logged back in after being added. New group memberships only apply to new login sessions!",
+        "Workaround for active SSH session: have the user run `newgrp webteam`.",
+        "Verify group has write access: `chmod g+w /var/www/staging`.",
+        "Set SGID so all subsequent files created by any dev inherit 'webteam': `chmod 2775 /var/www/staging`."
       ]
     },
     interviewQuestions: [
       {
-        q: "What is the security risk of SUID on a shell script?",
-        a: "Linux kernels intentionally ignore the SUID bit on interpreted scripts (like bash) because environment variables like `PATH` and `IFS` can be manipulated to execute arbitrary commands as root."
+        q: "How does a umask of 027 affect default file and directory creation permissions?",
+        a: "Base file permission is 666, base directory permission is 777. With umask 027 (subtracting 027): Files get 640 (`-rw-r-----`), meaning Owner has rw, Group has r, Others have no access. Directories get 750 (`drwxr-x---`), meaning Owner has rwx, Group has rx, Others have no access."
       },
       {
-        q: "How does default umask 022 affect newly created files vs directories?",
-        a: "Base permissions are 666 for files and 777 for directories. Subtracting umask 022 gives 644 (`-rw-r--r--`) for files and 755 (`drwxr-xr-x`) for directories."
+        q: "How do you recognize if a file has an extended ACL configured from `ls -l` output?",
+        a: "A plus sign (`+`) will appear at the end of the permission string (e.g., `-rw-r-----+ 1 root root`). To view the exact ACL entries, you run `getfacl <filename>`."
       }
     ]
   },
@@ -112,51 +114,50 @@ const linuxCurriculum = [
     title: "3. Process Management, Load Average & Performance Triage",
     icon: "fa-solid fa-microchip",
     level: "Advanced (L2/L3)",
-    lead: "Diagnose CPU spikes, memory starvation, Out-Of-Memory (OOM) killer invocations, and zombie/uninterruptible D-state processes.",
-    description: "As an enterprise support engineer, understanding whether high load average is caused by CPU saturation or Disk I/O wait is the hallmark of senior problem solving.",
+    lead: "Diagnose CPU contention, memory starvation, Out-Of-Memory (OOM) killer invocations, and zombie vs uninterruptible D-state processes.",
+    description: "In senior technical interviews, you will frequently be asked: 'The load average is 30, but CPU is 95% idle. What is happening?' Mastering process states and kernel metrics is essential.",
     keyConcepts: [
       {
         title: "Load Average Decoded",
-        text: "The three load average numbers (1 min, 5 min, 15 min) represent the average number of threads in RUNNABLE state (state R) or UNINTERRUPTIBLE SLEEP state (state D, usually waiting on disk/NFS I/O). A load of 8.0 on a 4-core machine means 200% saturation; on a 16-core machine, it is only 50% utilized."
+        text: "The three load average numbers (1, 5, 15 min) represent the average number of threads in RUNNABLE state (state R) or UNINTERRUPTIBLE SLEEP state (state D, usually waiting on disk/NFS I/O). A load of 8.0 on a 4-core machine means 200% saturation; on a 16-core machine, it is only 50% utilized."
       },
       {
-        title: "Process States (R, S, D, Z, T)",
-        text: "R: Running/runnable. S: Interruptible sleep (waiting for event). D: Uninterruptible sleep (I/O wait - CANNOT be killed even with `kill -9`). Z: Zombie (child terminated, parent has not reaped exit code). T: Stopped."
+        title: "Process States (R, S, D, Z)",
+        text: "• R (Running/Runnable): Actively executing on CPU or waiting in run queue.\n• S (Interruptible Sleep): Waiting for an event or network socket (normal).\n• D (Uninterruptible Sleep): Process is inside a kernel syscall waiting for hardware I/O (disk, SAN, NFS). IT CANNOT BE KILLED, even with `kill -9`!\n• Z (Zombie): Process has terminated, but its parent process has not called `wait()` to collect its exit code. It holds no memory or CPU, only a PID table entry."
       },
       {
-        title: "Linux Memory & OOM Killer",
-        text: "Linux utilizes spare RAM for disk caching (`buff/cache`). Look at 'available' memory in `free -m`, not 'free'. When memory and swap run out completely, the Linux kernel triggers the OOM killer (`dmesg -T | grep -i oom`) and terminates the process with the highest `oom_score`."
+        title: "Memory & Linux OOM Killer",
+        text: "Linux caches disk reads into RAM (`buff/cache`). Never look at 'free' memory; look at 'available' memory in `free -m`. When memory and swap are completely exhausted, the kernel invokes the OOM Killer, checks process `oom_score`, and sends `SIGKILL` to the most memory-intensive process."
       }
     ],
     commands: [
-      { cmd: "uptime", desc: "Display current uptime, logged-in users, and 1/5/15-min load averages" },
-      { cmd: "top -b -n 1 | head -n 20", desc: "Batch capture top 20 processes without interactive prompt" },
-      { cmd: "ps aux --sort=-%cpu | head -n 10", desc: "Identify top 10 CPU-consuming processes" },
-      { cmd: "ps aux --sort=-%mem | head -n 10", desc: "Identify top 10 memory-consuming processes" },
-      { cmd: "free -m -h", desc: "Check memory usage, swap space, and buffer/cache in human-readable format" },
-      { cmd: "vmstat 1 5", desc: "Report virtual memory, processes (r, b), paging (si, so), and CPU wait (wa)" },
-      { cmd: "pidstat 1 3", desc: "Display per-task CPU utilization breakdown in real time" },
-      { cmd: "kill -15 <PID> && kill -9 <PID>", desc: "Graceful SIGTERM first, followed by force SIGKILL if unresponsive" }
+      { cmd: "uptime", desc: "Display current system uptime, logged-in user count, and 1/5/15-minute load averages" },
+      { cmd: "top -b -n 1 | head -n 25", desc: "Capture real-time CPU, RAM, and process table snapshot in non-interactive batch mode" },
+      { cmd: "ps aux --sort=-%cpu | head -n 10", desc: "Identify top 10 CPU-consuming processes across the entire server" },
+      { cmd: "ps aux --sort=-%mem | head -n 10", desc: "Identify top 10 memory-consuming processes across the server" },
+      { cmd: "free -m -h", desc: "Show RAM and swap usage, buffer cache, and truly available memory in human units" },
+      { cmd: "vmstat 1 5", desc: "Virtual memory statistics: monitor run queue (r), blocked processes (b), paging (si/so), and I/O wait (wa)" },
+      { cmd: "dmesg -T | grep -iE 'oom|kill'", desc: "Inspect kernel ring buffer for timestamps of Out-Of-Memory process termination" }
     ],
     realWorldScenario: {
-      title: "Scenario 3: Production Server Freezes, High Load Average but CPU is 98% Idle",
-      problem: "Load average spikes to 45 on an 8-core RHEL server. However, CPU utilization shows `95% id` (idle) and `75% wa` (I/O wait).",
+      title: "Scenario 3: Server Freezes with High Load Average but CPU is 95% Idle",
+      problem: "Load average spikes to 42 on an 8-core server. However, CPU utilization shows `95% id` (idle) and `78% wa` (I/O wait).",
       steps: [
-        "Run `vmstat 1 5` to inspect the `b` (blocked processes) and `wa` columns.",
-        "High `wa` means processes are stuck waiting for disk reads/writes or an unresponsive NFS mount.",
-        "Run `iostat -xz 1 5` and examine the `%util` and `await` columns. If `%util` is 100%, physical disk or SAN array is bottlenecked.",
-        "Run `iotop -oP` to see exactly which Process ID is flooding disk write throughput.",
-        "Check `/var/log/messages` or `dmesg -T` for disk controller timeouts, bad sectors, or NFS server timeout errors."
+        "Run `vmstat 1 5`. Inspect the `b` (blocked processes) and `wa` (I/O wait) columns.",
+        "High `wa` means processes are waiting on storage (disk read/write or hanging NFS mount).",
+        "Run `iostat -xz 1 5`. Check the `%util` and `await` columns. If `%util` is near 100%, disk hardware is saturated.",
+        "Run `iotop -oP` to see which exact PID is flooding disk throughput.",
+        "Check `/var/log/messages` or `dmesg -T` for disk controller timeouts, filesystem aborts, or unreachable NFS servers."
       ]
     },
     interviewQuestions: [
       {
-        q: "How do you kill a process in 'D' (Uninterruptible Sleep) state?",
-        a: "You CANNOT kill a D-state process—not even with `kill -9`! The process is inside a kernel-level uninterruptible system call waiting for hardware I/O (e.g., stuck on an offline NFS share, hung SAN LUN, or failing hard disk). The only solutions are restoring the underlying I/O resource or rebooting the server."
+        q: "Can you kill a process in 'D' (Uninterruptible Sleep) state using `kill -9`?",
+        a: "No! A process in 'D' state is suspended in a kernel system call waiting for hardware I/O to complete. The kernel will not deliver signals (including SIGKILL 9) to a process in D-state until the hardware I/O completes. If the underlying disk or NFS share never responds, the only way to clear it is to fix the storage link or reboot the server."
       },
       {
-        q: "How do you clear Zombie processes from a Linux server?",
-        a: "A zombie process (`Z` state) is already dead and consumes zero CPU or RAM—it only holds a slot in the process table. You cannot kill a zombie with `kill -9`. You must send `SIGHUP` or `SIGCHLD` to its parent process (`kill -CHLD <PPID>`). If the parent application refuses to reap it, restarting the parent process will adopt the zombie to PID 1 (`systemd`), which immediately cleans it up."
+        q: "How do you remove Zombie processes from a server?",
+        a: "Zombies are already dead and do not consume CPU or RAM. You cannot kill them with `kill -9`. You must notify the parent process to reap it by sending `kill -CHLD <PPID>`. If the parent application is stuck, restart the parent service, which transfers the zombies to PID 1 (systemd), which immediately reaps them."
       }
     ]
   },
@@ -169,7 +170,7 @@ const linuxCurriculum = [
     icon: "fa-solid fa-gears",
     level: "Advanced (RHCSA Core)",
     lead: "Master systemd targets, unit files, dependencies, socket activation, and querying systemd-journald logs with advanced filters.",
-    description: "In modern RHEL 7/8/9, systemd replaced SysV init. Support engineers must know how to inspect unit dependencies, troubleshoot boot loops, and recover failed services.",
+    description: "In modern RHEL 7/8/9, systemd manages system initialization, background daemons, and system timers. Support engineers must know how to inspect unit dependencies, troubleshoot boot loops, and recover failed services.",
     keyConcepts: [
       {
         title: "Systemd Architecture",
@@ -381,7 +382,7 @@ const linuxCurriculum = [
     icon: "fa-solid fa-clipboard-question",
     level: "Interview Preparation",
     lead: "Real-world incident troubleshooting workflows, ITIL RCA frameworks, and 15 top technical interview questions asked by enterprise recruiters.",
-    description: "Align your 5 years of experience directly with the questions hiring managers ask for Senior Technical Support and Systems Administrator roles.",
+    description: "Align your experience directly with the questions hiring managers ask for Senior Technical Support and Systems Administrator roles.",
     keyConcepts: [
       {
         title: "The Structured Troubleshooting Methodology (USE Method)",
@@ -424,6 +425,364 @@ const linuxCurriculum = [
         q: "How do you reset a lost root password on RHEL 8?",
         a: "Reboot the system, at the GRUB menu press `e` to edit the kernel boot line, append `rd.break` at the end of the `linux` line, press `Ctrl+X` to boot into emergency ramfs. Remount sysroot writable (`mount -o remount,rw /sysroot`), chroot into it (`chroot /sysroot`), change password (`passwd`), force SELinux relabel (`touch /.autorelabel`), type `exit` twice to reboot."
       }
+    ]
+  }
+];
+
+// 2. 20 MULTIPLE CHOICE QUESTIONS (MCQs) WITH ENTERPRISE MARKING SCHEME (+2 Correct, -0.5 Wrong)
+const quizData = [
+  {
+    id: 1,
+    q: "You deleted a 25GB log file using 'rm /var/log/app.log', but 'df -h' still shows the partition at 100% full. What command helps you identify the process keeping the space locked?",
+    options: [
+      "du -sh /var/log/*",
+      "lsof | grep '(deleted)'",
+      "fuser -m /var/log",
+      "systemctl restart rsyslog"
+    ],
+    answer: 1,
+    explanation: "When a process still has an open file handle, the Linux kernel keeps the disk blocks allocated even if unlinked from directory tree. 'lsof | grep (deleted)' identifies the PID holding the descriptor."
+  },
+  {
+    id: 2,
+    q: "A server shows a 1-minute load average of 24.0 on an 8-core CPU server. However, running 'top' reveals CPU idle at 94% and I/O wait ('%wa') at 78%. What is the bottleneck?",
+    options: [
+      "CPU is overloaded by too many multithreaded calculation loops",
+      "Processes are blocked in Uninterruptible Sleep (D-state) waiting on slow or saturated storage/disk I/O",
+      "The Linux Kernel OOM killer is purging processes",
+      "Network bandwidth is exhausted by incoming DDoS traffic"
+    ],
+    answer: 1,
+    explanation: "Linux load average accounts for both running processes (R) and processes in uninterruptible sleep (D state). High I/O wait ('wa') with idle CPU means tasks are hung waiting on disk/SAN/NFS operations."
+  },
+  {
+    id: 3,
+    q: "How can you terminate a process that is currently in 'D' (Uninterruptible Sleep) state?",
+    options: [
+      "kill -9 <PID>",
+      "kill -15 <PID>",
+      "pkill -f <process_name>",
+      "You cannot kill it with signals; you must resolve the hanging I/O or reboot the system"
+    ],
+    answer: 3,
+    explanation: "D-state processes are waiting inside a kernel system call for hardware. The kernel blocks all signals—including SIGKILL 9—until the hardware call returns."
+  },
+  {
+    id: 4,
+    q: "Which command dynamically expands an XFS filesystem after extending the underlying LVM Logical Volume?",
+    options: [
+      "resize2fs /dev/mapper/vg_data-lv_app",
+      "xfs_growfs /mountpoint",
+      "xfs_repair -e /dev/mapper/vg_data-lv_app",
+      "fsck.xfs /mountpoint"
+    ],
+    answer: 1,
+    explanation: "'xfs_growfs' takes the mount point as an argument to expand an XFS filesystem. Remember: XFS cannot be reduced/shrunk!"
+  },
+  {
+    id: 5,
+    q: "What is the primary difference between 'systemctl enable' and 'systemctl start'?",
+    options: [
+      "'enable' starts the service immediately; 'start' configures it for reboot",
+      "'enable' creates a symlink in systemd targets for boot persistence; 'start' launches the process right now in memory",
+      "'enable' reloads the configuration file, whereas 'start' runs unit tests",
+      "They are identical commands in RHEL 8 and 9"
+    ],
+    answer: 1,
+    explanation: "'start' modifies running state; 'enable' creates symlinks under /etc/systemd/system/*.wants/ so systemd knows to launch it during target activation upon reboot."
+  },
+  {
+    id: 6,
+    q: "A user tries to save a file and gets 'No space left on device', but 'df -h' reports that only 45% of disk space is utilized. What is the most likely cause?",
+    options: [
+      "The filesystem is out of Inodes (100% Inode utilization)",
+      "The user has exceeded their CPU quota in cgroups",
+      "SELinux is blocking writes due to wrong booleans",
+      "The /etc/fstab file is corrupted"
+    ],
+    answer: 0,
+    explanation: "Every file requires an Inode pointer. If a partition has millions of tiny files (like session files or mail queues), it can consume all Inodes (df -i at 100%) even if gigabytes of physical storage remain."
+  },
+  {
+    id: 7,
+    q: "What does setting the SGID (Set Group ID) permission bit on a directory do?",
+    options: [
+      "Allows any user to execute scripts inside that directory as root",
+      "Forces all newly created files in that directory to inherit the directory's group ownership",
+      "Prevents users from deleting other users' files in that directory",
+      "Restricts the directory to read-only access"
+    ],
+    answer: 1,
+    explanation: "SGID on a directory (chmod 2770) ensures that collaborative teams have shared ownership: newly created files automatically inherit the group of the parent directory."
+  },
+  {
+    id: 8,
+    q: "Which command shows listening TCP/UDP sockets with numeric port numbers and their corresponding process IDs without slow DNS lookups?",
+    options: [
+      "netstat -a",
+      "ss -tulnp",
+      "lsof -i",
+      "ip route show"
+    ],
+    answer: 1,
+    explanation: "'ss -tulnp' (TCP, UDP, Listening, Numeric, Process) is the high-performance modern replacement for netstat in Enterprise Linux."
+  },
+  {
+    id: 9,
+    q: "In RHEL 8/9, how do you permanently open TCP port 8080 in firewalld and apply it immediately without dropping active sessions?",
+    options: [
+      "iptables -A INPUT -p tcp --dport 8080 -j ACCEPT",
+      "firewall-cmd --permanent --add-port=8080/tcp && firewall-cmd --reload",
+      "systemctl restart firewalld --port=8080",
+      "firewall-cmd --zone=public --open-port=8080"
+    ],
+    answer: 1,
+    explanation: "Using '--permanent' writes the rule to XML disk configuration, and 'firewall-cmd --reload' applies it dynamically without disrupting existing active connections."
+  },
+  {
+    id: 10,
+    q: "A web server returns 403 Forbidden after moving its DocumentRoot to /data/www. Permissions are 755 (apache:apache). What SELinux command restores the correct file contexts?",
+    options: [
+      "setenforce 0",
+      "semanage fcontext -a -t httpd_sys_content_t '/data/www(/.*)?' && restorecon -Rv /data/www",
+      "chmod -R 777 /data/www",
+      "chcon -u root /data/www"
+    ],
+    answer: 1,
+    explanation: "'semanage fcontext' registers the directory in the SELinux policy database, and 'restorecon -Rv' applies the 'httpd_sys_content_t' context to all files."
+  },
+  {
+    id: 11,
+    q: "What is the function of the Sticky Bit when applied to a directory like /tmp?",
+    options: [
+      "Prevents any file in the directory from being modified",
+      "Ensures files can only be deleted or renamed by the file owner or root user",
+      "Makes all files in the directory executable by everyone",
+      "Automatically compresses old files after 24 hours"
+    ],
+    answer: 1,
+    explanation: "Sticky Bit ('chmod +t' or '1777') ensures that in shared directories like /tmp, users cannot delete or overwrite other users' files."
+  },
+  {
+    id: 12,
+    q: "What parameter should you pass to the kernel line in GRUB2 to boot into an emergency shell to reset a lost root password in RHEL 8?",
+    options: [
+      "single",
+      "init=/bin/bash or rd.break",
+      "emergency.target",
+      "rescue -root"
+    ],
+    answer: 1,
+    explanation: "Appending 'rd.break' interrupts the boot process in the initramfs stage before root filesystem is mounted, allowing you to remount /sysroot as rw and change the root password."
+  },
+  {
+    id: 13,
+    q: "When looking at 'free -m', which column reflects the true amount of RAM available to launch new applications without paging into swap?",
+    options: [
+      "free",
+      "available",
+      "buff/cache",
+      "shared"
+    ],
+    answer: 1,
+    explanation: "Linux uses idle RAM for filesystem buffering ('buff/cache'). The 'available' column estimates the actual RAM that can be reclaimed immediately for new apps without swapping."
+  },
+  {
+    id: 14,
+    q: "Which command allows you to view historical CPU utilization metrics from previous days on a server configured with sysstat?",
+    options: [
+      "sar -u -f /var/log/sa/sa<day>",
+      "dmesg --history",
+      "top -H",
+      "uptime --log"
+    ],
+    answer: 0,
+    explanation: "'sar' (System Activity Reporter) reads daily binary log files under /var/log/sa/ to analyze historical CPU, RAM, and I/O spikes."
+  },
+  {
+    id: 15,
+    q: "What signal does 'kill -9 <PID>' send to a process?",
+    options: [
+      "SIGTERM (Graceful Termination Request)",
+      "SIGKILL (Immediate Uncatchable Kernel Termination)",
+      "SIGHUP (Hangup / Reload Configuration)",
+      "SIGINT (Keyboard Interrupt)"
+    ],
+    answer: 1,
+    explanation: "Signal 9 is SIGKILL, which is handled directly by the kernel and cannot be caught, ignored, or blocked by the user process."
+  },
+  {
+    id: 16,
+    q: "Why should you use filesystem UUIDs instead of '/dev/sdb1' in /etc/fstab?",
+    options: [
+      "UUIDs allow files to read twice as fast",
+      "Device node paths can change dynamically during server reboots if controller scan order changes",
+      "LVM does not support device names",
+      "UUIDs are required by firewalld"
+    ],
+    answer: 1,
+    explanation: "Kernel disk scanning is asynchronous; adding or removing disks can cause /dev/sdb to become /dev/sdc, causing boot failure or mounting the wrong volume if UUIDs are not used."
+  },
+  {
+    id: 17,
+    q: "Which command in NetworkManager displays the active connection profiles and hardware device link status?",
+    options: [
+      "nmcli device status",
+      "ifconfig -a",
+      "route -n",
+      "ip link down"
+    ],
+    answer: 0,
+    explanation: "'nmcli device status' provides an overview of network interfaces and their currently connected NetworkManager profiles."
+  },
+  {
+    id: 18,
+    q: "What command lets you attach to a running process and trace all of its kernel system calls in real time?",
+    options: [
+      "lsof -p <PID>",
+      "strace -p <PID> -f",
+      "gdb --status <PID>",
+      "systemd-analyze blame"
+    ],
+    answer: 1,
+    explanation: "'strace' intercepts and records system calls made by a process and the signals received, which is invaluable when an app is hanging."
+  },
+  {
+    id: 19,
+    q: "What is an Access Vector Cache (AVC) denial in Linux?",
+    options: [
+      "A hardware GPU crash",
+      "An SELinux security audit event indicating an action was blocked or logged as a violation",
+      "A failed network handshake in SSH",
+      "A disk block read error reported by SMART"
+    ],
+    answer: 1,
+    explanation: "AVC denials are generated by the SELinux subsystem when an operation violates mandatory access controls, logged in /var/log/audit/audit.log."
+  },
+  {
+    id: 20,
+    q: "What command permanently sets a boolean in SELinux so that the Apache web server can establish outbound network connections?",
+    options: [
+      "setsebool -P httpd_can_network_connect 1",
+      "chmod +x /usr/sbin/httpd",
+      "setenforce permissive",
+      "firewall-cmd --add-service=http"
+    ],
+    answer: 0,
+    explanation: "'setsebool -P' persists the boolean change across reboots. Setting 'httpd_can_network_connect 1' allows Apache/Nginx to proxy requests to backends."
+  }
+];
+
+// 3. PRODUCTION SCENARIO SIMULATOR DRILLS (Multi-stage interactive problem solving)
+const scenarioDrills = [
+  {
+    id: "drill-1",
+    title: "Incident 1: Web Service Down (502 Bad Gateway / Connection Refused)",
+    severity: "P1 Critical",
+    alert: "PagerDuty Alert: Production Customer Portal is down. Load balancer reports 502 Bad Gateway to backend node 10.10.40.15:8080.",
+    phases: [
+      {
+        question: "Step 1: You have SSH access to 10.10.40.15. What is the very first diagnostic command you run?",
+        options: [
+          { text: "reboot", feedback: "Wrong! Never reboot a production server blindly without identifying why the service crashed. You lose volatile memory and forensic logs.", nextPhase: 0 },
+          { text: "systemctl status portal-app.service", feedback: "Correct! You immediately check service status. Output: 'Active: failed (Result: exit-code)'. Main PID 4210 terminated.", nextPhase: 1 },
+          { text: "rm -rf /tmp/*", feedback: "Danger! Random deletion does not diagnose service state.", nextPhase: 0 },
+          { text: "firewall-cmd --reload", feedback: "Premature. First verify if the application daemon is even running.", nextPhase: 0 }
+        ]
+      },
+      {
+        question: "Step 2: The service is in 'failed' state. How do you find the exact error message that caused the crash?",
+        options: [
+          { text: "journalctl -u portal-app.service -n 40 --no-pager", feedback: "Spot on! The logs reveal: 'java.net.BindException: Address already in use: :8080'.", nextPhase: 2 },
+          { text: "cat /var/log/wtmp", feedback: "Incorrect. wtmp records logins, not application stderr.", nextPhase: 1 },
+          { text: "ping localhost", feedback: "Pinging does not explain port binding errors.", nextPhase: 1 }
+        ]
+      },
+      {
+        question: "Step 3: Port 8080 is already in use by another process. How do you find which process has hijacked port 8080?",
+        options: [
+          { text: "ss -tulnp | grep :8080", feedback: "Excellent! You see PID 1890 (a rogue Python test script) is bound to 0.0.0.0:8080.", nextPhase: 3 },
+          { text: "netstat -rn", feedback: "Incorrect. 'netstat -rn' checks routing table, not listening ports.", nextPhase: 2 },
+          { text: "ls -l /proc", feedback: "Too generic.", nextPhase: 2 }
+        ]
+      },
+      {
+        question: "Step 4: You kill rogue PID 1890. What is your final action to restore production and verify health?",
+        options: [
+          { text: "systemctl start portal-app.service && curl -Iv http://localhost:8080/health", feedback: "Incident Resolved! Service starts cleanly, returns HTTP 200 OK. SLA restored within 8 minutes!", nextPhase: 4 },
+          { text: "setenforce 0", feedback: "Do not weaken server security when the issue was an application port conflict.", nextPhase: 3 }
+        ]
+      }
+    ]
+  },
+  {
+    id: "drill-2",
+    title: "Incident 2: Root Filesystem at 100% Disk Utilization",
+    severity: "P2 High",
+    alert: "Zabbix Alert: Host rhel-app-02: Disk space on '/' is at 99.8%. Cron jobs and database transactions are failing.",
+    phases: [
+      {
+        question: "Step 1: You connect to the server. How do you safely find which top-level directory is consuming space without crossing into external mounts?",
+        options: [
+          { text: "du -xhd1 / | sort -hr | head -10", feedback: "Perfect! The '-x' flag prevents scanning separate mounts (like NFS or /boot). Output shows: 42GB in /var/log.", nextPhase: 1 },
+          { text: "rm -rf /var/log/*", feedback: "Catastrophic! Deleting all logs wipes active system audit logs and can break running daemons.", nextPhase: 0 },
+          { text: "fdisk -l", feedback: "fdisk shows partition table sizes, not filesystem directory consumption.", nextPhase: 0 }
+        ]
+      },
+      {
+        question: "Step 2: You navigate to /var/log and find 'audit/audit.log' is 38GB. A junior admin asks to run 'rm audit.log'. What do you do?",
+        options: [
+          { text: "Truncate it safely with '> /var/log/audit/audit.log' or rotate via logrotate", feedback: "Correct! Truncating ('> filename') zeroes the file size immediately without breaking open file descriptors held by auditd.", nextPhase: 2 },
+          { text: "Run 'rm -f audit.log'", feedback: "Risk! The auditd process will continue writing to the unlinked file descriptor, meaning 'df -h' will still report 100% full!", nextPhase: 1 }
+        ]
+      },
+      {
+        question: "Step 3: What long-term preventative action (CAPA) must be implemented in the RCA report?",
+        options: [
+          { text: "Configure /etc/logrotate.d/audit with maxsize 1G, daily rotation, and 7-day retention", feedback: "Production Excellence! You created a permanent preventive control. Incident closed.", nextPhase: 3 },
+          { text: "Disable auditd daemon", feedback: "Disabling security auditing fails PCI-DSS and SOC2 regulatory compliance.", nextPhase: 2 }
+        ]
+      }
+    ]
+  }
+];
+
+// 4. ENTERPRISE HANDS-ON PROJECTS (Showcase in interviews)
+const enterpriseProjects = [
+  {
+    title: "Project 1: High-Availability Web Cluster with HAProxy & Keepalived",
+    level: "Advanced Architecture",
+    tags: ["RHEL 8", "HAProxy", "Keepalived", "VRRP", "Firewalld"],
+    summary: "Architected a dual-node active-passive load balancing cluster ensuring zero downtime for backend Apache/Nginx web tiers.",
+    deliverables: [
+      "Configured Keepalived with Virtual Router Redundancy Protocol (VRRP) managing a shared Virtual IP (VIP 10.10.40.100).",
+      "Deployed HAProxy with round-robin balancing, active health checks (`check inter 2000 fall 3 rise 2`), and sticky session cookies.",
+      "Configured firewalld VRRP protocol pass-through (`firewall-cmd --add-protocol=vrrp --permanent`).",
+      "Tested failover: simulated primary node crash by stopping keepalived; backup node transitioned to MASTER state within 300ms without dropped packets."
+    ]
+  },
+  {
+    title: "Project 2: Enterprise Storage Expansion & LVM Disaster Recovery Runbook",
+    level: "Systems Administration",
+    tags: ["LVM", "XFS", "SAN Storage", "Multipath", "fstab Recovery"],
+    summary: "Automated zero-downtime online storage expansion across 50+ enterprise virtual machines and standardized emergency recovery.",
+    deliverables: [
+      "Partitioned new SAN LUNs using `parted` GPT labels, initialized Physical Volumes with `pvcreate`, and extended Volume Groups.",
+      "Performed live volume expansions using `lvextend -r` without unmounting critical database filesystems.",
+      "Implemented UUID mounting policies across all enterprise servers to eliminate device node name drifting during SCSI rescan.",
+      "Authored disaster recovery runbook for recovering unbootable servers stuck in emergency mode due to corrupt `/etc/fstab` mounts."
+    ]
+  },
+  {
+    title: "Project 3: Production Log Triage & Automated Incident Remediation",
+    level: "Observability & SRE",
+    tags: ["Bash", "Journalctl", "Cron", "Logrotate", "Slack Webhooks"],
+    summary: "Built automated monitoring scripts that proactively scan kernel logs for OOM events and disk threshold warnings before SLA breach.",
+    deliverables: [
+      "Created a modular Bash diagnostic daemon that scans `/var/log/messages` and `dmesg -T` for hardware and kernel errors.",
+      "Automated automated memory and swap threshold alerts when available RAM drops below 10%.",
+      "Standardized enterprise `/etc/logrotate.d/` policies to compress logs with gzip and retain 30 days of forensic audit logs.",
+      "Reduced P1 log-related disk full outages by 90% across production clusters."
     ]
   }
 ];

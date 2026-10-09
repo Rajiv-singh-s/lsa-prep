@@ -1,9 +1,15 @@
-// Interactive App Engine for Linux Training Platform
+// Interactive Controller: Modules, Multi-View, 20-MCQ Exam Engine, Incident Drills, Projects, and Responsive Terminal Lab
 document.addEventListener('DOMContentLoaded', () => {
   let currentModuleIndex = 0;
   let activeFilter = 'all';
   const completedModules = JSON.parse(localStorage.getItem('linux_completed_modules') || '[]');
 
+  // Quiz state
+  let quizAnswers = JSON.parse(localStorage.getItem('linux_quiz_answers') || '{}');
+  let currentScenarioIndex = 0;
+  let scenarioPhase = 0;
+
+  // DOM Elements
   const sidebarNav = document.getElementById('sidebar-nav');
   const moduleContent = document.getElementById('module-content');
   const bcCategory = document.getElementById('bc-category');
@@ -15,29 +21,40 @@ document.addEventListener('DOMContentLoaded', () => {
   const filterTabs = document.querySelectorAll('.filter-tab');
   const themeToggle = document.getElementById('theme-toggle');
 
-  // Terminal elements
+  // Mobile Drawer
+  const menuToggle = document.getElementById('menu-toggle');
+  const sidebar = document.getElementById('sidebar');
+  const drawerBackdrop = document.getElementById('drawer-backdrop');
+  const closeDrawer = document.getElementById('close-drawer');
+
+  // View Switcher
+  const viewBtns = document.querySelectorAll('.view-btn');
+  const appViews = document.querySelectorAll('.app-view');
+
+  // Terminal Simulator
   const termInput = document.getElementById('term-input');
   const termOutput = document.getElementById('term-output');
   const btnClearTerm = document.getElementById('clear-term');
+  const btnSendCmd = document.getElementById('btn-send-cmd');
 
-  // Realistic mock responses for the built-in terminal simulator
+  // Rich mock terminal responses
   const mockCommandResponses = {
-    "uptime": " 10:45:12 up 42 days, 14:18,  2 users,  load average: 0.28, 0.45, 0.52",
-    "top": `top - 10:45:14 up 42 days, 14:18,  2 users,  load average: 0.28, 0.45, 0.52
-Tasks: 215 total,   1 running, 214 sleeping,   0 stopped,   0 zombie
-%Cpu(s):  1.2 us,  0.8 sy,  0.0 ni, 97.5 id,  0.4 wa,  0.0 hi,  0.1 si,  0.0 st
-MiB Mem :  16048.0 total,   4210.5 free,   8120.2 used,   3717.3 buff/cache
-MiB Swap:   4096.0 total,   4096.0 free,      0.0 used.   7428.1 avail Mem 
+    "uptime": " 10:55:12 up 45 days, 18:22,  2 users,  load average: 0.32, 0.48, 0.55",
+    "top": `top - 10:55:14 up 45 days, 18:22,  2 users,  load average: 0.32, 0.48, 0.55
+Tasks: 218 total,   1 running, 217 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  1.5 us,  0.7 sy,  0.0 ni, 97.4 id,  0.3 wa,  0.0 hi,  0.1 si,  0.0 st
+MiB Mem :  16048.0 total,   4120.5 free,   8210.2 used,   3717.3 buff/cache
+MiB Swap:   4096.0 total,   4096.0 free,      0.0 used.   7318.1 avail Mem 
 
   PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
- 1248 root      20   0 1450284 185320  42100 S   2.3   1.1  14:32.18 dockerd
+ 1248 root      20   0 1450284 185320  42100 S   2.1   1.1  14:32.18 dockerd
  2840 apache    20   0  482912  64200  18200 S   1.0   0.4   4:10.55 httpd
   890 root      20   0  210480  28400  12500 S   0.3   0.2   1:20.12 systemd-journald`,
     "free -m": `               total        used        free      shared  buff/cache   available
-Mem:           16048        8120        4210         385        3717        7428
+Mem:           16048        8210        4120         385        3717        7318
 Swap:           4096           0        4096`,
     "free -m -h": `               total        used        free      shared  buff/cache   available
-Mem:            15Gi       7.9Gi       4.1Gi       385Mi       3.6Gi       7.2Gi
+Mem:            15Gi       8.0Gi       4.0Gi       385Mi       3.6Gi       7.1Gi
 Swap:          4.0Gi          0B       4.0Gi`,
     "df -h": `Filesystem             Size  Used Avail Use% Mounted on
 devtmpfs               7.8G     0  7.8G   0% /dev
@@ -55,53 +72,30 @@ devtmpfs               devtmpfs  7.8G     0  7.8G   0% /dev
 /dev/mapper/rhel-root 3276800 241080 3035720    8% /
 /dev/sda1              524288    340  523948    1% /boot
 /dev/mapper/rhel-var  1966080 185400 1780680   10% /var`,
-    "netstat -tulnp": `Active Internet connections (only servers)
-Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    
-tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN      1024/sshd           
-tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN      2840/httpd          
-tcp        0      0 0.0.0.0:443             0.0.0.0:*               LISTEN      2840/httpd          
-tcp6       0      0 :::22                   :::*                    LISTEN      1024/sshd`,
     "ss -tulnp": `Netid  State   Recv-Q  Send-Q   Local Address:Port   Peer Address:Port  Process                                     
 tcp    LISTEN  0       128            0.0.0.0:22          0.0.0.0:*      users:(("sshd",pid=1024,fd=3))              
 tcp    LISTEN  0       511            0.0.0.0:80          0.0.0.0:*      users:(("httpd",pid=2840,fd=4))             
 tcp    LISTEN  0       511            0.0.0.0:443         0.0.0.0:*      users:(("httpd",pid=2840,fd=5))             
 tcp    LISTEN  0       128               [::]:22             [::]:*      users:(("sshd",pid=1024,fd=4))`,
-    "systemctl status httpd": `● httpd.service - The Apache HTTP Server
-   Loaded: loaded (/usr/lib/systemd/system/httpd.service; enabled; vendor preset: disabled)
-   Active: active (running) since Wed 2026-09-02 04:12:10 UTC; 37 days ago
-     Docs: man:httpd.service(8)
- Main PID: 2840 (httpd)
-   Status: "Total requests: 1840212; Idle/Busy workers 100/0; CPU-usage: 0.12%"
-    Tasks: 213 (limit: 4915)
-   Memory: 62.4M
-   CGroup: /system.slice/httpd.service
-           ├─2840 /usr/sbin/httpd -DFOREGROUND
-           ├─2842 /usr/sbin/httpd -DFOREGROUND
-           └─2843 /usr/sbin/httpd -DFOREGROUND
-
-Sep 02 04:12:10 prod-rhel8 systemd[1]: Starting The Apache HTTP Server...
-Sep 02 04:12:11 prod-rhel8 systemd[1]: Started The Apache HTTP Server.`,
+    "netstat -tulnp": `Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    
+tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN      1024/sshd           
+tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN      2840/httpd          
+tcp        0      0 0.0.0.0:443             0.0.0.0:*               LISTEN      2840/httpd`,
     "systemctl status httpd.service": `● httpd.service - The Apache HTTP Server
    Loaded: loaded (/usr/lib/systemd/system/httpd.service; enabled; vendor preset: disabled)
    Active: active (running) since Wed 2026-09-02 04:12:10 UTC; 37 days ago
-   Main PID: 2840 (httpd)
-   Memory: 62.4M`,
-    "dmesg | tail": `[3648120.124500] e1000e 0000:00:19.0 eth0: NIC Link is Up 1000 Mbps Full Duplex
-[3652190.412891] EXT4-fs (sda1): re-mounted. Opts: errors=remount-ro
-[3658200.109281] systemd[1]: Started Session 1480 of user root.
-[3659400.912401] XFS (dm-0): Mounting V5 Filesystem
-[3659400.981023] XFS (dm-0): Ending clean mount
-[3660100.120300] SELinux: initialized (dev dm-0, type xfs), uses xattr`,
+ Main PID: 2840 (httpd)
+   Tasks: 213 (limit: 4915)
+   Memory: 62.4M
+   CGroup: /system.slice/httpd.service`,
     "sestatus": `SELinux status:                 enabled
 SELinuxfs mount:                /sys/fs/selinux
 SELinux root directory:         /etc/selinux
 Loaded policy name:             targeted
 Current mode:                   enforcing
 Mode from config file:          enforcing
-Policy MLS status:              enabled
-Policy deny_unknown status:     allowed
-Memory protection checking:     actual (secure)
-Max kernel policy version:      33`,
+Policy MLS status:              enabled`,
     "pvs && vgs && lvs": `  PV         VG        Fmt  Attr PSize    PFree 
   /dev/sda2  rhel_vg   lvm2 a--  <99.00g <10.00g
   VG        #PV #LV #SN Attr   VSize    VFree  
@@ -113,17 +107,52 @@ Max kernel policy version:      33`,
     "ip addr show": `1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
     inet 127.0.0.1/8 scope host lo
 2: ens192: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 1000
-    inet 10.10.40.15/24 brd 10.10.40.255 scope global dynamic noprefixroute ens192
-       valid_lft 68240sec preferred_lft 68240sec`,
+    inet 10.10.40.15/24 brd 10.10.40.255 scope global dynamic noprefixroute ens192`,
     "ip route show": `default via 10.10.40.1 dev ens192 proto static metric 100 
 10.10.40.0/24 dev ens192 proto kernel scope link src 10.10.40.15 metric 100`,
-    "whoami": "root",
-    "hostname": "prod-rhel8.enterprise.internal",
-    "uname -a": "Linux prod-rhel8.enterprise.internal 4.18.0-477.10.1.el8_8.x86_64 #1 SMP x86_64 GNU/Linux",
-    "cat /etc/redhat-release": "Red Hat Enterprise Linux release 8.8 (Ootpa)"
+    "uname -r": "4.18.0-477.10.1.el8_8.x86_64",
+    "cat /etc/redhat-release": "Red Hat Enterprise Linux release 8.8 (Ootpa)",
+    "help": `Available simulation commands:
+uptime, top, free -m, free -m -h, df -h, df -Th, df -i, ss -tulnp, netstat -tulnp,
+systemctl status httpd.service, sestatus, pvs && vgs && lvs, ip addr show, ip route show,
+uname -r, cat /etc/redhat-release, clear, ping <host>, ls, chmod, chown`
   };
 
-  // Render Sidebar Navigation
+  // Mobile Drawer Toggle
+  function openMobileDrawer() {
+    sidebar.classList.add('open');
+    drawerBackdrop.classList.add('active');
+  }
+
+  function closeMobileDrawer() {
+    sidebar.classList.remove('open');
+    drawerBackdrop.classList.remove('active');
+  }
+
+  if (menuToggle) menuToggle.addEventListener('click', openMobileDrawer);
+  if (drawerBackdrop) drawerBackdrop.addEventListener('click', closeMobileDrawer);
+  if (closeDrawer) closeDrawer.addEventListener('click', closeMobileDrawer);
+
+  // View Switcher Logic
+  viewBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      viewBtns.forEach(b => b.classList.remove('active'));
+      appViews.forEach(v => v.classList.remove('active-view'));
+
+      btn.classList.add('active');
+      const targetView = btn.getAttribute('data-view');
+      const targetSection = document.getElementById(`view-${targetView}-section`);
+      if (targetSection) {
+        targetSection.classList.add('active-view');
+      }
+
+      if (targetView === 'quiz') renderQuiz();
+      if (targetView === 'simulator') renderScenarioSimulator();
+      if (targetView === 'projects') renderProjects();
+    });
+  });
+
+  // Render Sidebar
   function renderSidebar() {
     sidebarNav.innerHTML = '';
     const filteredModules = linuxCurriculum.filter(m => {
@@ -142,14 +171,17 @@ Max kernel policy version:      33`,
         <i class="${mod.icon} nav-item-icon"></i>
         <div class="nav-item-info">
           <strong>${mod.title}</strong>
-          <span>${mod.level} • ${mod.categoryLabel}</span>
+          <span>${mod.level}</span>
         </div>
       `;
 
       itemCard.addEventListener('click', () => {
         currentModuleIndex = realIndex;
+        // switch view to modules
+        document.querySelector('.view-btn[data-view="modules"]').click();
         renderActiveModule();
         renderSidebar();
+        closeMobileDrawer();
       });
 
       sidebarNav.appendChild(itemCard);
@@ -158,7 +190,6 @@ Max kernel policy version:      33`,
     updateProgress();
   }
 
-  // Update progress bar
   function updateProgress() {
     const total = linuxCurriculum.length;
     const completedCount = completedModules.length;
@@ -167,7 +198,7 @@ Max kernel policy version:      33`,
     progressFill.style.width = `${pct}%`;
   }
 
-  // Render the Selected Module
+  // Render Active Module
   function renderActiveModule() {
     const mod = linuxCurriculum[currentModuleIndex];
     if (!mod) return;
@@ -192,7 +223,7 @@ Max kernel policy version:      33`,
         <p>${mod.description}</p>
         <div style="display: flex; flex-direction: column; gap: 14px; margin-top: 14px;">
           ${mod.keyConcepts.map(kc => `
-            <div style="background: var(--bg-primary); padding: 14px 18px; border-radius: 8px; border: 1px solid var(--border-color);">
+            <div style="background: var(--bg-primary); padding: 16px 18px; border-radius: 8px; border: 1px solid var(--border-color);">
               <h4 style="color: var(--accent-blue); margin-bottom: 6px;"><i class="fa-solid fa-angles-right"></i> ${kc.title}</h4>
               <p style="margin: 0; font-size: 0.88rem; color: var(--text-muted);">${kc.text.replace(/\n/g, '<br/>')}</p>
             </div>
@@ -201,24 +232,26 @@ Max kernel policy version:      33`,
       </div>
 
       <div class="section-block">
-        <h2><i class="fa-solid fa-terminal"></i> Critical Commands Cheatsheet (Click to Test in Lab)</h2>
-        <p>Click on any command chip below to instantly send it to the live simulator terminal at the bottom.</p>
-        <table class="cmd-table">
-          <thead>
-            <tr>
-              <th style="width: 48%;">Command</th>
-              <th>Production Diagnostic Purpose</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${mod.commands.map(c => `
+        <h2><i class="fa-solid fa-terminal"></i> Critical Commands (Click to Test in Lab)</h2>
+        <p>Click on any command chip below to run it in the live simulator terminal.</p>
+        <div class="cmd-table-container">
+          <table class="cmd-table">
+            <thead>
               <tr>
-                <td><span class="code-chip" data-cmd="${c.cmd}"><i class="fa-solid fa-play"></i> <code>${c.cmd}</code></span></td>
-                <td>${c.desc}</td>
+                <th style="width: 48%;">Command</th>
+                <th>Diagnostic Purpose</th>
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              ${mod.commands.map(c => `
+                <tr>
+                  <td><span class="code-chip" data-cmd="${c.cmd}"><i class="fa-solid fa-play"></i> <code>${c.cmd}</code></span></td>
+                  <td>${c.desc}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div class="section-block">
@@ -228,8 +261,8 @@ Max kernel policy version:      33`,
             <i class="fa-solid fa-fire"></i> ${mod.realWorldScenario.title}
           </div>
           <p style="color: #cbd5e1; font-size: 0.88rem; margin-bottom: 12px;"><strong>Problem Statement:</strong> ${mod.realWorldScenario.problem}</p>
-          <div style="background: var(--bg-secondary); padding: 12px; border-radius: 6px; border: 1px solid var(--border-color);">
-            <strong style="color: #38bdf8; font-size: 0.85rem; display: block; margin-bottom: 6px;">Investigation & Resolution SOP:</strong>
+          <div style="background: var(--bg-secondary); padding: 14px; border-radius: 6px; border: 1px solid var(--border-color);">
+            <strong style="color: #38bdf8; font-size: 0.85rem; display: block; margin-bottom: 8px;">Investigation & Resolution SOP:</strong>
             <ol style="margin-left: 20px; font-size: 0.85rem; color: var(--text-muted); line-height: 1.7;">
               ${mod.realWorldScenario.steps.map(step => `<li>${step}</li>`).join('')}
             </ol>
@@ -239,7 +272,7 @@ Max kernel policy version:      33`,
 
       <div class="section-block">
         <h2><i class="fa-solid fa-comments"></i> Technical Interview Q&A (L2/L3 Technical Rounds)</h2>
-        <p>Key questions asked by enterprise recruiters and systems architects:</p>
+        <p>Key technical questions asked by enterprise recruiters and systems architects:</p>
         ${mod.interviewQuestions.map((qa, i) => `
           <div class="qa-card">
             <div class="qa-question" onclick="this.nextElementSibling.classList.toggle('open')">
@@ -310,20 +343,22 @@ Max kernel policy version:      33`,
           <i class="${mod.icon} nav-item-icon"></i>
           <div class="nav-item-info">
             <strong>${mod.title}</strong>
-            <span>Found in search</span>
+            <span>Matched Keyword</span>
           </div>
         `;
         itemCard.addEventListener('click', () => {
           currentModuleIndex = idx;
+          document.querySelector('.view-btn[data-view="modules"]').click();
           renderActiveModule();
           renderSidebar();
+          closeMobileDrawer();
         });
         sidebarNav.appendChild(itemCard);
       }
     });
   });
 
-  // Copy all commands in module
+  // Copy Cheatsheet
   document.getElementById('btn-copy-code').addEventListener('click', () => {
     const mod = linuxCurriculum[currentModuleIndex];
     const text = mod.commands.map(c => `# ${c.desc}\n${c.cmd}`).join('\n\n');
@@ -339,21 +374,215 @@ Max kernel policy version:      33`,
     themeToggle.innerHTML = isLight ? `<i class="fa-solid fa-sun"></i>` : `<i class="fa-solid fa-moon"></i>`;
   });
 
-  // Interactive Terminal Logic
+  // 20-QUESTION MCQ EXAM ENGINE WITH ENTERPRISE MARKING SCHEME (+2, -0.5)
+  function renderQuiz() {
+    const container = document.getElementById('quiz-container');
+    container.innerHTML = '';
+
+    quizData.forEach((item, index) => {
+      const card = document.createElement('div');
+      card.className = 'mcq-card';
+      const userSelected = quizAnswers[item.id];
+      const isAnswered = userSelected !== undefined;
+
+      let optionsHtml = item.options.map((opt, optIdx) => {
+        let btnClass = 'mcq-opt-btn';
+        if (isAnswered) {
+          if (optIdx === item.answer) btnClass += ' correct';
+          else if (userSelected === optIdx) btnClass += ' wrong';
+        }
+        return `
+          <button class="${btnClass}" ${isAnswered ? 'disabled' : ''} data-qid="${item.id}" data-opt="${optIdx}">
+            <span>${String.fromCharCode(65 + optIdx)}.</span> <span>${opt}</span>
+          </button>
+        `;
+      }).join('');
+
+      card.innerHTML = `
+        <div class="mcq-header">
+          <span><strong>Question ${index + 1} of 20</strong></span>
+          <span>Marking: +2 / -0.5</span>
+        </div>
+        <div class="mcq-question">${item.q}</div>
+        <div class="mcq-options">${optionsHtml}</div>
+        <div class="mcq-explanation" style="${isAnswered ? 'display:block;' : ''}">
+          <strong style="color: ${userSelected === item.answer ? '#10b981' : '#f43f5e'}; display:block; margin-bottom: 4px;">
+            ${userSelected === item.answer ? '✓ Correct (+2.0)' : (isAnswered ? '✗ Incorrect (-0.5)' : '')}
+          </strong>
+          ${item.explanation}
+        </div>
+      `;
+
+      container.appendChild(card);
+    });
+
+    // Attach click events on option buttons
+    container.querySelectorAll('.mcq-opt-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const qid = parseInt(btn.getAttribute('data-qid'));
+        const opt = parseInt(btn.getAttribute('data-opt'));
+        quizAnswers[qid] = opt;
+        localStorage.setItem('linux_quiz_answers', JSON.stringify(quizAnswers));
+        renderQuiz();
+        calculateScore();
+      });
+    });
+
+    calculateScore();
+  }
+
+  function calculateScore() {
+    let score = 0;
+    let correctCount = 0;
+    const answeredCount = Object.keys(quizAnswers).length;
+
+    quizData.forEach(item => {
+      if (quizAnswers[item.id] !== undefined) {
+        if (quizAnswers[item.id] === item.answer) {
+          score += 2.0;
+          correctCount++;
+        } else {
+          score -= 0.5;
+        }
+      }
+    });
+
+    document.getElementById('quiz-total-score').innerText = `${score.toFixed(1)} / 40`;
+    document.getElementById('quiz-answered-count').innerText = `${answeredCount} / 20`;
+    const accuracy = answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0;
+    document.getElementById('quiz-accuracy').innerText = `${accuracy}%`;
+  }
+
+  document.getElementById('btn-reset-quiz').addEventListener('click', () => {
+    if (confirm("Are you sure you want to reset the exam and re-attempt all questions?")) {
+      quizAnswers = {};
+      localStorage.removeItem('linux_quiz_answers');
+      renderQuiz();
+    }
+  });
+
+  // PRODUCTION INCIDENT SIMULATOR LAB
+  function renderScenarioSimulator() {
+    const selector = document.getElementById('sim-scenario-selector');
+    const box = document.getElementById('scenario-interactive-box');
+    selector.innerHTML = '';
+
+    scenarioDrills.forEach((s, idx) => {
+      const btn = document.createElement('button');
+      btn.className = `sim-select-btn ${idx === currentScenarioIndex ? 'active' : ''}`;
+      btn.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${s.title}`;
+      btn.addEventListener('click', () => {
+        currentScenarioIndex = idx;
+        scenarioPhase = 0;
+        renderScenarioSimulator();
+      });
+      selector.appendChild(btn);
+    });
+
+    const activeScenario = scenarioDrills[currentScenarioIndex];
+    const phaseObj = activeScenario.phases[scenarioPhase];
+
+    let contentHtml = `
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h3 style="color: #f87171; margin: 0;"><i class="fa-solid fa-fire"></i> ${activeScenario.title}</h3>
+        <span style="background: rgba(244,63,94,0.15); color: #fb7185; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 700;">${activeScenario.severity}</span>
+      </div>
+      <p style="color: #cbd5e1; font-size: 0.9rem; background: var(--bg-primary); padding: 12px; border-radius: 6px; border: 1px solid var(--border-color);">
+        <strong>Monitoring Alert:</strong> ${activeScenario.alert}
+      </p>
+    `;
+
+    if (scenarioPhase >= activeScenario.phases.length) {
+      contentHtml += `
+        <div style="background: rgba(16,185,129,0.15); border: 1px solid #10b981; padding: 20px; border-radius: 8px; margin-top: 16px; text-align: center;">
+          <h3 style="color: #34d399; margin-bottom: 8px;"><i class="fa-solid fa-circle-check"></i> Outage Resolved & SLA Preserved!</h3>
+          <p style="color: #e2e8f0; font-size: 0.9rem;">You correctly investigated the issue without causing secondary failures. Full RCA is filed.</p>
+          <button id="btn-restart-scenario" style="margin-top: 12px; background: var(--bg-card); border: 1px solid var(--border-color); color: var(--text-main); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">Restart Incident Drill</button>
+        </div>
+      `;
+    } else {
+      contentHtml += `
+        <div class="sim-phase-card">
+          <h4 style="color: var(--accent-blue); margin-bottom: 10px;">${phaseObj.question}</h4>
+          <div class="sim-choices-grid">
+            ${phaseObj.options.map((opt, i) => `
+              <button class="sim-choice-btn" data-opt-idx="${i}">
+                <i class="fa-solid fa-terminal"></i> ${opt.text}
+              </button>
+            `).join('')}
+          </div>
+          <div id="sim-feedback-box" style="display: none; margin-top: 14px; padding: 12px; border-radius: 6px; font-size: 0.85rem;"></div>
+        </div>
+      `;
+    }
+
+    box.innerHTML = contentHtml;
+
+    const restartBtn = document.getElementById('btn-restart-scenario');
+    if (restartBtn) {
+      restartBtn.addEventListener('click', () => {
+        scenarioPhase = 0;
+        renderScenarioSimulator();
+      });
+    }
+
+    box.querySelectorAll('.sim-choice-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const optIdx = parseInt(btn.getAttribute('data-opt-idx'));
+        const chosen = phaseObj.options[optIdx];
+        const feedbackBox = document.getElementById('sim-feedback-box');
+        feedbackBox.style.display = 'block';
+
+        if (chosen.nextPhase > scenarioPhase) {
+          feedbackBox.style.background = 'rgba(16, 185, 129, 0.15)';
+          feedbackBox.style.border = '1px solid #10b981';
+          feedbackBox.style.color = '#34d399';
+          feedbackBox.innerHTML = `<strong>✓ Action Successful:</strong> ${chosen.feedback}`;
+          setTimeout(() => {
+            scenarioPhase = chosen.nextPhase;
+            renderScenarioSimulator();
+          }, 1400);
+        } else {
+          feedbackBox.style.background = 'rgba(244, 63, 94, 0.15)';
+          feedbackBox.style.border = '1px solid #f43f5e';
+          feedbackBox.style.color = '#fb7185';
+          feedbackBox.innerHTML = `<strong>✗ Command Failed:</strong> ${chosen.feedback}`;
+        }
+      });
+    });
+  }
+
+  // ENTERPRISE PROJECTS VIEW
+  function renderProjects() {
+    const grid = document.getElementById('projects-grid');
+    grid.innerHTML = enterpriseProjects.map(p => `
+      <div class="proj-card">
+        <span style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: var(--accent-blue);">${p.level}</span>
+        <h3 class="proj-title">${p.title}</h3>
+        <p style="font-size: 0.88rem; color: var(--text-muted); margin-bottom: 12px;">${p.summary}</p>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;">
+          ${p.tags.map(t => `<span style="background: var(--bg-primary); border: 1px solid var(--border-color); font-size: 0.72rem; padding: 2px 7px; border-radius: 4px; color: var(--accent-emerald);">${t}</span>`).join('')}
+        </div>
+        <strong style="font-size: 0.82rem; color: var(--text-main);">Enterprise Architecture & Deliverables:</strong>
+        <ul class="proj-deliverables">
+          ${p.deliverables.map(d => `<li>${d}</li>`).join('')}
+        </ul>
+      </div>
+    `).join('');
+  }
+
+  // TERMINAL ENGINE
   function executeTerminalCommand(inputVal) {
     const cmd = inputVal.trim();
     if (!cmd) return;
 
-    // Append Command Echo
     const cmdEcho = document.createElement('div');
     cmdEcho.className = 'term-line cmd-echo';
     cmdEcho.innerText = `[root@prod-rhel8 ~]# ${cmd}`;
     termOutput.appendChild(cmdEcho);
 
-    // Look up mock response or generate realistic fallback
     const resLine = document.createElement('div');
     resLine.className = 'term-line output-text';
-
     const normalizedCmd = cmd.toLowerCase();
 
     if (normalizedCmd === 'clear') {
@@ -373,7 +602,7 @@ Max kernel policy version:      33`,
       } else if (normalizedCmd.startsWith('ls')) {
         output = `total 36\ndrwxr-xr-x. 4 root root 4096 Oct  9 10:30 .\ndr-xr-xr-x. 18 root root 4096 Sep  2 04:10 ..\n-rw-r--r--. 1 root root  280 Oct  9 10:25 application.conf\n-rwxr-xr-x. 1 root root 8412 Oct  9 10:28 start_service.sh\ndrwxr-xr-x. 2 root root 4096 Oct  9 10:29 logs`;
       } else {
-        output = `Executed '${cmd}' on prod-rhel8. [Return Code: 0 (OK)]\n(Simulation environment: command validated for enterprise RHEL standard).`;
+        output = `Executed '${cmd}' on prod-rhel8. [Return Code: 0 (OK)]\n(Simulation environment: command validated for enterprise RHEL standard). Type 'help' for examples.`;
       }
     }
 
@@ -390,11 +619,19 @@ Max kernel policy version:      33`,
     }
   });
 
+  if (btnSendCmd) {
+    btnSendCmd.addEventListener('click', () => {
+      const val = termInput.value;
+      executeTerminalCommand(val);
+      termInput.value = '';
+    });
+  }
+
   btnClearTerm.addEventListener('click', () => {
-    termOutput.innerHTML = '<div class="term-line output-text">Terminal cleared. Type commands below.</div>';
+    termOutput.innerHTML = '<div class="term-line output-text">Terminal cleared. Type commands below or click command chips. Type "help" for options.</div>';
   });
 
-  // Initial Load
+  // Init
   renderSidebar();
   renderActiveModule();
 });

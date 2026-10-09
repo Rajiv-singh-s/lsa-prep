@@ -2,35 +2,53 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Linux Mastery & Production Server Training Hub | Rajiv Singh</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css" />
-  <!-- FontAwesome for clean icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
 </head>
 <body class="dark-theme">
+  <!-- Mobile Drawer Backdrop -->
+  <div class="drawer-backdrop" id="drawer-backdrop"></div>
+
   <!-- Top Navbar -->
   <header class="navbar">
-    <div class="nav-brand">
-      <i class="fa-brands fa-redhat brand-icon"></i>
-      <div class="brand-text">
-        <span class="brand-title">LinuxSysAdmin <span class="badge-rhcsa">RHCSA & Production L3</span></span>
-        <span class="brand-sub">Enterprise Engineering & Troubleshooting Masterclass</span>
+    <div class="nav-left">
+      <button class="btn-menu-toggle" id="menu-toggle" aria-label="Toggle Navigation Menu">
+        <i class="fa-solid fa-bars"></i>
+      </button>
+      <div class="nav-brand">
+        <i class="fa-brands fa-redhat brand-icon"></i>
+        <div class="brand-text">
+          <div class="brand-title-wrap">
+            <span class="brand-title">LinuxSysAdmin</span>
+            <span class="badge-rhcsa">L2/L3 & RHCSA</span>
+          </div>
+          <span class="brand-sub">Enterprise Production Engineering & Diagnostic Hub</span>
+        </div>
       </div>
     </div>
+
+    <!-- Quick Navigation View Tabs -->
+    <div class="view-switcher" id="view-switcher">
+      <button class="view-btn active" data-view="modules"><i class="fa-solid fa-book"></i> <span>Modules</span></button>
+      <button class="view-btn" data-view="quiz"><i class="fa-solid fa-list-check"></i> <span>20 MCQ Exam</span></button>
+      <button class="view-btn" data-view="simulator"><i class="fa-solid fa-gamepad"></i> <span>Scenario Labs</span></button>
+      <button class="view-btn" data-view="projects"><i class="fa-solid fa-diagram-project"></i> <span>Enterprise Projects</span></button>
+    </div>
+
     <div class="nav-actions">
-      <div class="search-box">
-        <i class="fa-solid fa-magnifying-glass"></i>
-        <input type="text" id="module-search" placeholder="Search commands, topics, troubleshooting..." />
-      </div>
       <div class="progress-container">
-        <span class="progress-label">Progress: <span id="progress-percent">0%</span></span>
+        <div class="progress-labels">
+          <span class="progress-text">Course Progress</span>
+          <span class="progress-percent" id="progress-percent">0%</span>
+        </div>
         <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
       </div>
-      <button class="btn-theme-toggle" id="theme-toggle" title="Toggle Theme">
+      <button class="btn-theme-toggle" id="theme-toggle" title="Toggle Dark/Light Mode">
         <i class="fa-solid fa-moon"></i>
       </button>
     </div>
@@ -38,78 +56,144 @@
 
   <div class="app-container">
     <!-- Sidebar Navigation -->
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <div class="user-chip">
-          <i class="fa-solid fa-user-gear"></i>
-          <div>
-            <strong>Curriculum for Rajiv Singh</strong>
-            <small>5 Yrs Experience / L2-L3 Prep</small>
+          <div class="avatar-circle"><i class="fa-solid fa-server"></i></div>
+          <div class="user-chip-text">
+            <strong>Training Modules</strong>
+            <small>Enterprise Linux Administration</small>
           </div>
         </div>
+        <button class="btn-close-drawer" id="close-drawer"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="search-box">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <input type="text" id="module-search" placeholder="Search commands, flags, triage..." />
       </div>
       
       <div class="module-filter-tabs">
-        <button class="filter-tab active" data-filter="all">All</button>
+        <button class="filter-tab active" data-filter="all">All (8)</button>
         <button class="filter-tab" data-filter="core">Foundations</button>
         <button class="filter-tab" data-filter="server">Server L2/L3</button>
         <button class="filter-tab" data-filter="interview">Interviews</button>
       </div>
 
       <nav class="sidebar-nav" id="sidebar-nav">
-        <!-- Injected via JavaScript -->
+        <!-- Rendered by JS -->
       </nav>
 
       <div class="sidebar-footer">
         <div class="stats-counter">
-          <span><i class="fa-solid fa-terminal"></i> 100+ Commands</span>
-          <span><i class="fa-solid fa-triangle-exclamation"></i> 25+ Prod Scenarios</span>
+          <span><i class="fa-solid fa-terminal"></i> 120+ Real Commands</span>
+          <span><i class="fa-solid fa-fire"></i> 8 Prod Incidents</span>
         </div>
       </div>
     </aside>
 
-    <!-- Main Content Workspace -->
-    <main class="main-content">
-      <!-- Breadcrumb and Quick Actions -->
-      <div class="content-header">
-        <div class="breadcrumbs">
-          <span id="bc-category">Linux Track</span> <i class="fa-solid fa-chevron-right separator"></i> <span id="bc-title">Module Title</span>
+    <!-- Main Workspace Area -->
+    <main class="main-content" id="main-content">
+      
+      <!-- VIEW 1: MODULE ARTICLE (Default) -->
+      <section id="view-modules-section" class="app-view active-view">
+        <div class="content-header">
+          <div class="breadcrumbs">
+            <span id="bc-category">Linux Track</span> 
+            <i class="fa-solid fa-chevron-right separator"></i> 
+            <span id="bc-title">Module Title</span>
+          </div>
+          <div class="header-actions">
+            <button class="btn-action" id="btn-mark-complete">
+              <i class="fa-regular fa-circle-check"></i> Mark as Completed
+            </button>
+            <button class="btn-action" id="btn-copy-code" title="Quick Copy All Commands">
+              <i class="fa-regular fa-copy"></i> Copy Cheatsheet
+            </button>
+          </div>
         </div>
-        <div class="header-actions">
-          <button class="btn-action" id="btn-mark-complete">
-            <i class="fa-regular fa-circle-check"></i> Mark as Completed
-          </button>
-          <button class="btn-action" id="btn-copy-code" title="Quick Copy All Commands in Module">
-            <i class="fa-regular fa-copy"></i> Copy Cheatsheet
-          </button>
+
+        <article class="module-article" id="module-content">
+          <!-- Rendered by JS -->
+        </article>
+      </section>
+
+      <!-- VIEW 2: 20-QUESTION MCQ EXAM WITH MARKING SCHEME -->
+      <section id="view-quiz-section" class="app-view">
+        <div class="quiz-hero">
+          <div class="quiz-badge"><i class="fa-solid fa-graduation-cap"></i> Enterprise Assessment</div>
+          <h2>Red Hat & Production L2/L3 Certification MCQ Exam</h2>
+          <p>20 Challenging Questions with standard enterprise marking (+2 for Correct, -0.5 for Wrong). Test your deep understanding of Linux Kernel, Process Scheduling, Inodes, LVM, SELinux, and Networking.</p>
+          <div class="exam-scoreboard-bar">
+            <div class="score-card">
+              <span class="label">Total Score</span>
+              <span class="val" id="quiz-total-score">0 / 40</span>
+            </div>
+            <div class="score-card">
+              <span class="label">Answered</span>
+              <span class="val" id="quiz-answered-count">0 / 20</span>
+            </div>
+            <div class="score-card">
+              <span class="label">Accuracy</span>
+              <span class="val" id="quiz-accuracy">0%</span>
+            </div>
+            <button class="btn-reset-quiz" id="btn-reset-quiz"><i class="fa-solid fa-rotate-right"></i> Reset Test</button>
+          </div>
         </div>
-      </div>
+        <div class="quiz-container" id="quiz-container">
+          <!-- 20 MCQs dynamically injected -->
+        </div>
+      </section>
 
-      <!-- Module View Container -->
-      <article class="module-article" id="module-content">
-        <!-- Rendered by JS -->
-      </article>
+      <!-- VIEW 3: INTERACTIVE SCENARIO LAB SIMULATOR -->
+      <section id="view-simulator-section" class="app-view">
+        <div class="simulator-hero">
+          <div class="sim-badge"><i class="fa-solid fa-fire-extinguisher"></i> Hands-on Troubleshooting Drill</div>
+          <h2>Real-Time Production Incident Simulator (P1/P2)</h2>
+          <p>Step directly into on-call engineer shoes. Read the escalation alert, choose your diagnostic commands, and progress step-by-step to recover the service within SLA.</p>
+        </div>
+        <div class="sim-scenario-selector" id="sim-scenario-selector">
+          <!-- Scenario buttons -->
+        </div>
+        <div class="scenario-interactive-card" id="scenario-interactive-box">
+          <!-- Loaded dynamically -->
+        </div>
+      </section>
 
-      <!-- Interactive Linux Command Sandbox / Lab Simulator -->
-      <section class="terminal-simulator-section">
+      <!-- VIEW 4: ENTERPRISE HANDS-ON PROJECTS -->
+      <section id="view-projects-section" class="app-view">
+        <div class="projects-hero">
+          <div class="proj-badge"><i class="fa-solid fa-laptop-code"></i> Real-World Enterprise Projects</div>
+          <h2>Production Portfolio Projects for Interviews</h2>
+          <p>Step-by-step end-to-end projects you can speak about during technical architecture rounds. Complete with system architectures, commands, and validation steps.</p>
+        </div>
+        <div class="projects-grid" id="projects-grid">
+          <!-- Projects rendered dynamically -->
+        </div>
+      </section>
+
+      <!-- GLOBAL INTERACTIVE TERMINAL SIMULATOR (Accessible Everywhere) -->
+      <section class="terminal-simulator-section" id="global-terminal">
         <div class="term-header">
           <div class="term-title">
-            <i class="fa-solid fa-terminal"></i> Interactive Lab Terminal (Command Simulator)
+            <i class="fa-solid fa-terminal"></i> Interactive Lab Terminal (RHEL 8 Simulator)
           </div>
           <div class="term-controls">
-            <span class="term-tip">Try: <code>uptime</code>, <code>top</code>, <code>dmesg | tail</code>, <code>systemctl status httpd</code>, <code>free -m</code>, <code>df -h</code>, <code>netstat -tulnp</code></span>
+            <span class="term-tip">Click any command chip above or type below (e.g., <code>top</code>, <code>uptime</code>, <code>free -m</code>, <code>df -h</code>, <code>ss -tulnp</code>)</span>
             <button id="clear-term" class="btn-clear"><i class="fa-solid fa-trash-can"></i> Clear</button>
           </div>
         </div>
         <div class="terminal-body" id="term-output">
-          <div class="term-line output-text">Enterprise Linux 8.8 (Red Hat Enterprise Linux / CentOS Core)</div>
-          <div class="term-line output-text">Type commands below or click any command in the module to execute and see actual enterprise server output!</div>
+          <div class="term-line output-text">Red Hat Enterprise Linux 8.8 (Ootpa) - Kernel 4.18.0-477.10.1.el8_8.x86_64</div>
+          <div class="term-line output-text">Terminal ready. Type commands below with bash syntax or test flags! Type 'help' for available simulations.</div>
         </div>
         <div class="term-input-row">
           <span class="prompt-symbol">[root@prod-rhel8 ~]#</span>
-          <input type="text" id="term-input" placeholder="Type a linux command (e.g., uptime, free -m, journalctl -xe)..." autocomplete="off" />
+          <input type="text" id="term-input" placeholder="Enter Linux command (e.g., uptime, free -m, journalctl -xe, sestatus)..." autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <button class="btn-send-cmd" id="btn-send-cmd"><i class="fa-solid fa-arrow-turn-down"></i></button>
         </div>
       </section>
+
     </main>
   </div>
 
