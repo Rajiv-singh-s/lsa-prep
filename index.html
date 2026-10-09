@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Linux Mastery & Production Server Training Hub | Rajiv Singh</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+  <!-- FontAwesome for clean icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+</head>
+<body class="dark-theme">
+  <!-- Top Navbar -->
+  <header class="navbar">
+    <div class="nav-brand">
+      <i class="fa-brands fa-redhat brand-icon"></i>
+      <div class="brand-text">
+        <span class="brand-title">LinuxSysAdmin <span class="badge-rhcsa">RHCSA & Production L3</span></span>
+        <span class="brand-sub">Enterprise Engineering & Troubleshooting Masterclass</span>
+      </div>
+    </div>
+    <div class="nav-actions">
+      <div class="search-box">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <input type="text" id="module-search" placeholder="Search commands, topics, troubleshooting..." />
+      </div>
+      <div class="progress-container">
+        <span class="progress-label">Progress: <span id="progress-percent">0%</span></span>
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      </div>
+      <button class="btn-theme-toggle" id="theme-toggle" title="Toggle Theme">
+        <i class="fa-solid fa-moon"></i>
+      </button>
+    </div>
+  </header>
+
+  <div class="app-container">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="user-chip">
+          <i class="fa-solid fa-user-gear"></i>
+          <div>
+            <strong>Curriculum for Rajiv Singh</strong>
+            <small>5 Yrs Experience / L2-L3 Prep</small>
+          </div>
+        </div>
+      </div>
+      
+      <div class="module-filter-tabs">
+        <button class="filter-tab active" data-filter="all">All</button>
+        <button class="filter-tab" data-filter="core">Foundations</button>
+        <button class="filter-tab" data-filter="server">Server L2/L3</button>
+        <button class="filter-tab" data-filter="interview">Interviews</button>
+      </div>
+
+      <nav class="sidebar-nav" id="sidebar-nav">
+        <!-- Injected via JavaScript -->
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="stats-counter">
+          <span><i class="fa-solid fa-terminal"></i> 100+ Commands</span>
+          <span><i class="fa-solid fa-triangle-exclamation"></i> 25+ Prod Scenarios</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Workspace -->
+    <main class="main-content">
+      <!-- Breadcrumb and Quick Actions -->
+      <div class="content-header">
+        <div class="breadcrumbs">
+          <span id="bc-category">Linux Track</span> <i class="fa-solid fa-chevron-right separator"></i> <span id="bc-title">Module Title</span>
+        </div>
+        <div class="header-actions">
+          <button class="btn-action" id="btn-mark-complete">
+            <i class="fa-regular fa-circle-check"></i> Mark as Completed
+          </button>
+          <button class="btn-action" id="btn-copy-code" title="Quick Copy All Commands in Module">
+            <i class="fa-regular fa-copy"></i> Copy Cheatsheet
+          </button>
+        </div>
+      </div>
+
+      <!-- Module View Container -->
+      <article class="module-article" id="module-content">
+        <!-- Rendered by JS -->
+      </article>
+
+      <!-- Interactive Linux Command Sandbox / Lab Simulator -->
+      <section class="terminal-simulator-section">
+        <div class="term-header">
+          <div class="term-title">
+            <i class="fa-solid fa-terminal"></i> Interactive Lab Terminal (Command Simulator)
+          </div>
+          <div class="term-controls">
+            <span class="term-tip">Try: <code>uptime</code>, <code>top</code>, <code>dmesg | tail</code>, <code>systemctl status httpd</code>, <code>free -m</code>, <code>df -h</code>, <code>netstat -tulnp</code></span>
+            <button id="clear-term" class="btn-clear"><i class="fa-solid fa-trash-can"></i> Clear</button>
+          </div>
+        </div>
+        <div class="terminal-body" id="term-output">
+          <div class="term-line output-text">Enterprise Linux 8.8 (Red Hat Enterprise Linux / CentOS Core)</div>
+          <div class="term-line output-text">Type commands below or click any command in the module to execute and see actual enterprise server output!</div>
+        </div>
+        <div class="term-input-row">
+          <span class="prompt-symbol">[root@prod-rhel8 ~]#</span>
+          <input type="text" id="term-input" placeholder="Type a linux command (e.g., uptime, free -m, journalctl -xe)..." autocomplete="off" />
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
