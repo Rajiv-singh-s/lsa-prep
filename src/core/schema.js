@@ -84,7 +84,7 @@ export function validateQuestion(q, topicIds) {
   if (!QUESTION_TYPES[q.type]) add('error', 'type', `Invalid question type "${q.type}"`);
   if (!Array.isArray(q.options) || q.options.length < 3) add('error', 'options', 'Fewer than 3 options');
   if (q.options.some(o => !String(o || '').trim())) add('error', 'options', 'Empty option text');
-  const norm = q.options.map(o => normalizeText(o));
+  const norm = q.options.map(o => String(o || '').trim().replace(/\s+/g, ' '));
   if (new Set(norm).size !== norm.length) add('error', 'ambiguous', 'Two options are identical');
   if (q.format === 'single' && q.options.length !== 4) add('warning', 'options', `Single-answer question has ${q.options.length} options (4 expected)`);
   if (q.answers.length === 0) add('error', 'answer', 'No correct answer');

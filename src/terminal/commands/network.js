@@ -590,7 +590,7 @@ export const networkCommands = [
       if (!sock) { ctx.print(`[client01] curl: (7) Failed to connect to 10.10.40.15 port ${port}: Connection refused\n(the firewall allowed the packet but nothing is listening on 0.0.0.0:${port})`); return 7; }
       if (proto === 'tcp' && [80, 443, 8080, 8081, 82].includes(port) || sock.proc === 'httpd') {
         const r = localHttp(sys, port, ctx.args[2] || '/');
-        ctx.print(`[client01] HTTP/1.1 ${r.status}${r.reason ? `   (${r.reason})` : ''}\n${r.body}`);
+        ctx.print(`[client01] HTTP/1.1 ${r.status} ${{ 200: 'OK', 403: 'Forbidden', 404: 'Not Found', 503: 'Service Unavailable' }[r.status] || ''}${r.reason ? `   (${r.reason})` : ''}\n${r.body}`);
         return r.status < 400 ? 0 : 22;
       }
       ctx.print(`[client01] connected: ${sock.proc} (pid ${sock.pid}) accepted the connection`);

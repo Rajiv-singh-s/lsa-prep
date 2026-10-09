@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node scripts/serve.mjs",
-    "test": "node --test tests/",
+    "test": "node --test tests/*.test.js",
     "lint": "eslint .",
     "validate": "node scripts/validate-content.mjs",
     "report": "node scripts/validate-content.mjs --write-report",

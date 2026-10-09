@@ -394,7 +394,7 @@ export const procCommands = [
         if (!ctx.requireRoot()) return 1;
         const files = args.includes('--system') ? ['/etc/sysctl.conf', ...listDir(sys, '/etc/sysctl.d').map(f => `/etc/sysctl.d/${f}`)] : [args[args.indexOf('-p') + 1] || '/etc/sysctl.conf'];
         for (const f of files) {
-          let text = '';
+          let text;
           try { text = sys.fs.readFile(f, '/'); } catch { if (!args.includes('--system')) { ctx.error(`sysctl: cannot open "${f}": No such file or directory`); return 1; } continue; }
           if (args.includes('--system')) ctx.print(`* Applying ${f} ...`);
           for (const l of text.split('\n')) if (l.trim() && !l.trim().startsWith('#') && l.includes('=')) setKey(l.trim());

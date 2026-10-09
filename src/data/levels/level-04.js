@@ -1029,6 +1029,734 @@ New files will be 600 and directories 700. Existing files need a one-off \`chmod
           ]
         }
       ]
+    },
+    {
+      id: 'L04-M4', title: 'Special permission bits and ACLs',
+      summary: 'The setuid, setgid and sticky bits, how they build safe shared group directories, and how POSIX ACLs (including default ACLs and the mask) grant access beyond one owner and one group.',
+      lessons: [
+        {
+          id: 'L04-M4-T1',
+          title: 'setuid, setgid and the sticky bit',
+          minutes: 35,
+          objectives: [
+            'Explain what setuid and setgid do on executables and what setgid does on directories',
+            'Explain how the sticky bit restricts deletion in world-writable directories',
+            'Set and clear special bits with symbolic and octal chmod and read them in ls -l output',
+            'Build a shared group directory with setgid and the sticky bit'
+          ],
+          prereqs: ['L04-M3-T1', 'L04-M3-T2'],
+          concept: `The nine rwx bits are not the whole mode. There are three more **special bits**, written as a leading octal digit: **setuid = 4**, **setgid = 2**, **sticky = 1**. \`chmod 2770 dir\` means "setgid + rwxrwx---".
+
+### setuid on executables (4xxx)
+Normally a process runs with the UID of the user who started it. When an executable has the setuid bit, the kernel sets the process's **effective UID** to the file's **owner** at \`execve()\`. That is how an ordinary user can change their password: \`/usr/bin/passwd\` is owned by root and setuid, so it can update \`/etc/shadow\`.
+
+\`\`\`
+-rwsr-xr-x. 1 root root 32648 /usr/bin/passwd
+\`\`\`
+
+The \`s\` in the owner execute position means setuid **and** execute. A capital \`S\` means setuid is set but execute is not - almost always a mistake. Linux ignores setuid on interpreted scripts (\`#!\` files) and on filesystems mounted \`nosuid\`.
+
+Every setuid-root binary is attack surface: a bug in it can become root access. Treat the list of such files as something to audit (M5).
+
+### setgid (2xxx)
+- On an **executable**: the process's effective GID becomes the file's group (used by a few tools such as \`write\` with group \`tty\`).
+- On a **directory**: new files and subdirectories created inside get the **directory's group** instead of the creator's primary group, and new subdirectories inherit the setgid bit too. This is the foundation of **shared group directories**.
+
+### Sticky bit (1xxx) on directories
+In a directory anyone can write to, any user could delete anyone else's files, because deletion needs write permission on the *directory*, not the file. With the sticky bit, a file can be deleted or renamed only by the **file owner**, the **directory owner**, or root. \`/tmp\` is \`drwxrwxrwt\` (1777). A \`t\` means sticky + others execute; \`T\` means sticky without others execute.
+
+### The shared group directory recipe
+\`\`\`
+groupadd finance
+mkdir /srv/finance
+chgrp finance /srv/finance
+chmod 2770 /srv/finance     # setgid: files get group finance
+# optionally 3770: also stop members deleting each other's files
+\`\`\`
+setgid fixes the *group* of new files; it does not fix their *mode*. Members still need a umask of 002 (or a default ACL, next lesson) so the group write bit is set on what they create.`,
+          internals: `The bits live in the inode's \`i_mode\` field next to the file type and rwx bits (\`S_ISUID\` 04000, \`S_ISGID\` 02000, \`S_ISVTX\` 01000). During \`execve()\` the kernel checks S_ISUID/S_ISGID and the mount's \`nosuid\` flag, then sets the effective and saved UID/GID in the new \`struct cred\`; the real UID stays the caller's, so the program can tell who invoked it. For directories, \`inode_init_owner()\` copies the parent's GID (and S_ISGID for subdirectories) when the parent has S_ISGID. The sticky check is in \`may_delete()\`: if the directory has S_ISVTX, the caller must own the file or the directory, or hold CAP_FOWNER.
+
+As a protection, the kernel clears setuid (and setgid when group-executable) when an unprivileged process writes to the file or when its owner changes via \`chown\`.`,
+          useCases: [
+            'Creating a project directory where every new file belongs to the team group',
+            'Protecting a world-writable upload or scratch directory so users cannot delete each other\'s files',
+            'Explaining to an auditor why passwd, sudo and su must be setuid root',
+            'Investigating an unexpected setuid file found during a security scan'
+          ],
+          syntax: 'chmod u+s FILE | chmod u-s FILE\nchmod g+s DIR  | chmod g-s DIR\nchmod +t DIR   | chmod -t DIR\nchmod 4755 FILE | chmod 2770 DIR | chmod 1777 DIR\nstat -c "%a %A %U:%G %n" PATH',
+          options: [
+            ['u+s / 4xxx', 'setuid - run executable with the file owner\'s effective UID'],
+            ['g+s / 2xxx', 'setgid - executable runs with file group; directory passes its group to new files'],
+            ['+t / 1xxx', 'sticky - only file owner, directory owner or root may delete/rename entries'],
+            ['stat -c %a', 'Show the full octal mode including the special-bit digit'],
+            ['chmod 00770 DIR', 'GNU chmod: a fifth leading zero is needed to clear setgid on a directory with a numeric mode'],
+            ['mount -o nosuid', 'Filesystem option that makes the kernel ignore setuid/setgid bits']
+          ],
+          examples: [
+            {
+              title: 'Read special bits in ls -l',
+              cmd: 'ls -ld /usr/bin/passwd /tmp /srv/finance',
+              out: '-rwsr-xr-x. 1 root root    32648 Feb 15 09:12 /usr/bin/passwd\ndrwxrwxrwt. 18 root root    4096 Oct  9 10:02 /tmp\ndrwxrws---. 2 root finance   6 Oct  9 10:05 /srv/finance',
+              fields: [
+                ['rws (owner)', 'setuid + owner execute on passwd'],
+                ['rwt (others)', 'sticky + others execute on /tmp'],
+                ['rws (group)', 'setgid + group execute on /srv/finance'],
+                ['root finance', 'Directory group that new files will inherit']
+              ]
+            },
+            {
+              title: 'Prove setgid inheritance',
+              cmd: 'touch /srv/finance/q3.xlsx; ls -l /srv/finance',
+              out: '-rw-rw-r--. 1 alice finance 0 Oct  9 10:07 q3.xlsx',
+              fields: [
+                ['alice', 'Owner is still the creator'],
+                ['finance', 'Group comes from the directory, not alice\'s primary group'],
+                ['rw-rw-r--', 'Group write came from alice\'s umask 002, not from setgid']
+              ],
+              note: 'If the file shows group alice, the directory lacks setgid or the file was moved in with mv (mv keeps the original group).'
+            },
+            {
+              title: 'Spot a misconfigured capital S',
+              cmd: 'stat -c "%a %A %n" /opt/tool/runme',
+              out: '4644 -rwSr--r-- /opt/tool/runme',
+              fields: [['S', 'setuid set but owner execute missing - the bit is useless and indicates a mistake']]
+            }
+          ],
+          walkthrough: [
+            'Run `ls -l /usr/bin/passwd /usr/bin/su /usr/bin/sudo` and identify the `s` in each.',
+            'Run `ls -ld /tmp /var/tmp` and explain the trailing `t`.',
+            'Create a group and directory: `sudo groupadd demo; sudo mkdir /srv/demo; sudo chgrp demo /srv/demo; sudo chmod 2770 /srv/demo`.',
+            'Add yourself (`sudo usermod -aG demo $USER`), start a new login shell, and create a file; check its group.',
+            'Add the sticky bit with `sudo chmod +t /srv/demo` and confirm `stat -c %a /srv/demo` prints 3770.',
+            'Clean up the demo group and directory when finished.'
+          ],
+          lab: {
+            goal: 'Build a team directory where files are owned by the team group and members cannot delete each other\'s files.',
+            steps: [
+              'Create the group and users: `sudo groupadd projx; sudo useradd -G projx dev1; sudo useradd -G projx dev2`.',
+              'Create the directory: `sudo mkdir -p /srv/projx && sudo chown root:projx /srv/projx && sudo chmod 3770 /srv/projx`.',
+              'As dev1 create a file: `sudo -u dev1 bash -c "umask 002; echo v1 > /srv/projx/plan.txt"`.',
+              'Check ownership: `ls -l /srv/projx` - group must be projx and mode rw-rw-r--.',
+              'As dev2 append to the file: `sudo -u dev2 bash -c "echo v2 >> /srv/projx/plan.txt"` (succeeds through group write).',
+              'As dev2 try to delete it: `sudo -u dev2 rm /srv/projx/plan.txt` - expect "Operation not permitted" because of the sticky bit.'
+            ],
+            verify: '`stat -c "%a %G" /srv/projx` prints `3770 projx`; plan.txt has group projx; dev2 can write but not delete dev1\'s file.'
+          },
+          troubleshooting: {
+            scenario: 'Team members report that files created in /srv/shared belong to their personal groups, so colleagues get "Permission denied" opening them.',
+            steps: [
+              'Evidence: `ls -ld /srv/shared` (look for s in the group execute slot), `ls -l` of recent files, and the users\' `umask`.',
+              'Hypothesis: setgid is missing (someone ran `chmod -R 770` with symbolic g-s, or recreated the directory), or files were moved in with mv, which preserves their group.',
+              'Fix: `sudo chmod g+s /srv/shared`, then correct existing content with `sudo chgrp -R team /srv/shared` and `sudo find /srv/shared -type d -exec chmod g+s {} +`.',
+              'Validate: a new file created by a member shows group team; a colleague can open it.'
+            ]
+          },
+          mistakes: [
+            'Expecting setgid to make files group-writable - it only sets the group; the mode still comes from umask or a default ACL.',
+            'Setting setuid on a shell script - Linux ignores it, and adding it to a binary copy of a shell would be a root backdoor.',
+            'Using `chmod 0770 dir` and believing setgid was cleared - GNU chmod preserves directory setuid/setgid unless you use `g-s` or a five-digit mode like 00770.',
+            'Using chmod 777 on a shared directory instead of a group plus setgid and sticky bits.',
+            'Assuming mv into a setgid directory changes the file\'s group - only newly created files inherit it.'
+          ],
+          safety: [
+            'Never add setuid to a binary without a security review; a setuid-root program with a bug is a root exploit.',
+            'Recursive chmod on a tree can strip or add special bits everywhere - preview with `find` first and keep `getfacl -R`/`stat` output as a rollback record.',
+            'Mount untrusted or removable filesystems with nosuid,nodev to neutralise setuid files on them.'
+          ],
+          distro: 'Behaviour is identical on RHEL and Debian/Ubuntu; it is kernel and coreutils behaviour. RHEL adds an SELinux label to every file (the trailing `.` in ls -l), which is checked in addition to mode bits. The GNU chmod rule about preserving directory setgid with numeric modes applies on all current distributions.',
+          challenge: {
+            task: 'A directory /srv/drop must let members of group uploaders create files that all belong to group uploaders, let everyone in the group read them, and prevent any member from deleting someone else\'s upload. Others get no access. Give the commands and the octal mode, and explain each bit.',
+            solution: `\`\`\`
+sudo mkdir -p /srv/drop
+sudo chown root:uploaders /srv/drop
+sudo chmod 3770 /srv/drop
+stat -c "%a %A %G" /srv/drop    # 3770 drwxrws--T uploaders
+\`\`\`
+- **2** (setgid): new files take group uploaders.
+- **1** (sticky): only the file owner, directory owner (root) or root can delete or rename entries.
+- **770**: owner and group get rwx (create needs w+x on the directory); others nothing, which is why ls shows \`T\` (sticky without others execute).
+
+Group *read* of each file depends on the creator's umask (022 or 002 both keep group read); a default ACL \`setfacl -d -m g:uploaders:r /srv/drop\` would make it independent of umask.`
+          },
+          interview: [
+            {
+              q: 'How can a normal user change their own password if /etc/shadow is root-only?',
+              a: '/usr/bin/passwd is setuid root, so the process runs with effective UID 0 and can write shadow; the program itself enforces that a normal user only changes their own entry, using the real UID to know who called it.',
+              mistake: 'Saying the user has write permission on /etc/shadow.',
+              followUp: 'Why does Linux ignore setuid on shell scripts?'
+            },
+            {
+              q: 'What is the difference between setgid on a file and on a directory?',
+              a: 'On an executable it sets the process effective GID to the file group. On a directory it makes new entries inherit the directory group, and new subdirectories inherit setgid, which is used for team directories.',
+              mistake: 'Describing only one of the two meanings.',
+              followUp: 'Does setgid affect files moved into the directory?'
+            },
+            {
+              q: 'Why does /tmp have the sticky bit?',
+              a: 'It is world-writable, and deleting a file needs only write permission on the directory. The sticky bit restricts deletion and rename to the file owner, the directory owner or root.',
+              mistake: 'Saying the sticky bit keeps files in memory or prevents modification of file contents.',
+              followUp: 'What does a capital T in the mode string mean?'
+            }
+          ],
+          revision: [
+            'Special digit: 4 setuid, 2 setgid, 1 sticky - e.g. 4755, 2770, 1777.',
+            'Lower-case s/t = special bit + execute; upper-case S/T = special bit without execute.',
+            'setuid/setgid on executables change effective UID/GID; ignored on scripts and nosuid mounts.',
+            'setgid on a directory = group inheritance; sticky on a directory = only owners delete.',
+            'Shared dir recipe: group + chgrp + chmod 2770 (3770 with sticky) + umask 002 or default ACL.'
+          ]
+        },
+        {
+          id: 'L04-M4-T2',
+          title: 'POSIX ACLs: getfacl, setfacl, default ACLs and the mask',
+          minutes: 40,
+          objectives: [
+            'Read getfacl output, including effective permissions and the mask',
+            'Grant and remove access for named users and groups with setfacl',
+            'Use default ACLs so new files in a directory inherit access',
+            'Explain how chmod interacts with the ACL mask and diagnose "ACL is set but access denied"',
+            'Back up and restore ACLs and preserve them when copying'
+          ],
+          prereqs: ['L04-M4-T1'],
+          concept: `Classic permissions describe exactly three classes: owner, one group, everyone else. When a file needs access for **one more user or group**, you either change the group (breaking other access) or loosen "other" (too broad). **POSIX Access Control Lists** add extra entries without touching ownership.
+
+### Entry types
+\`\`\`
+user::rw-          owner (same as the owner bits)
+user:alice:rw-     named user
+group::r--         owning group
+group:audit:r--    named group
+mask::rw-          upper limit for named users, named groups and the owning group
+other::---         everyone else
+\`\`\`
+A file with any named entry shows a **\`+\`** after the mode in \`ls -l\`.
+
+### The mask
+The **mask** is the maximum permission that named users, named groups and the owning group can actually use. Effective access = entry AND mask. \`getfacl\` prints \`#effective:\` when the mask cuts an entry down.
+
+Crucially, once an ACL exists, the **group bits shown by \`ls -l\` and changed by \`chmod g=\` are the mask**, not the owning group's entry. So \`chmod 640 file\` after granting \`u:alice:rw\` silently reduces alice to read-only. \`setfacl -m\` recalculates the mask to cover all entries (unless \`-n\` is given).
+
+### Default ACLs
+A directory can carry a second list, the **default ACL** (\`default:\` lines, set with \`setfacl -d\`). It is not used for access checks on the directory itself; it is the template copied into every new file and subdirectory created inside. New subdirectories also inherit the default ACL, so it propagates down. When a parent has a default ACL, the **umask is not applied**; the creating program's requested mode (e.g. 666 for files) is ANDed with the inherited entries instead.
+
+Default ACLs affect only **new** objects. For existing content use \`setfacl -R -m\` as well.
+
+### Common commands
+\`\`\`
+setfacl -m u:alice:rw report.txt        # add/modify
+setfacl -m g:audit:rX -R /srv/data       # X = execute only for dirs/already-executable
+setfacl -d -m g:team:rwX /srv/team       # default ACL
+setfacl -x u:alice report.txt           # remove one entry
+setfacl -k /srv/team                     # remove default ACL
+setfacl -b report.txt                   # remove all extended entries
+\`\`\`
+
+ACLs are still evaluated in order: owner, then named users, then owning and named groups (any matching group grants), then other. SELinux and the mode/ACL check must *both* allow access.`,
+          internals: `ACLs are stored as extended attributes: \`system.posix_acl_access\` and, on directories, \`system.posix_acl_default\`. XFS (the RHEL default) and ext4 support them out of the box; ext4 mounts with \`acl\` by default. When an ACL exists, the inode's group mode bits are kept in sync with the ACL mask, which is why \`chmod\` and \`ls\` operate on the mask.
+
+At \`open()\`/\`access()\` time, \`posix_acl_permission()\` walks the entries: owner match uses user:: directly; named user and group matches are ANDed with the mask; other uses other::. On create, \`posix_acl_create()\` copies the parent default ACL into the new inode and ANDs it with the requested mode, skipping the umask.
+
+Tools must explicitly preserve xattrs: \`cp -a\` and \`cp --preserve=mode\` keep ACLs, \`tar\` needs \`--acls\`, \`rsync\` needs \`-A\`.`,
+          useCases: [
+            'Giving an auditor read access to application logs without adding them to the application group',
+            'Letting two teams share a directory where each needs different rights',
+            'Ensuring every file created in a project directory is writable by the team regardless of individual umasks',
+            'Granting a service account access to one path without changing ownership managed by a package'
+          ],
+          syntax: 'getfacl [-R] PATH\nsetfacl -m u:USER:PERMS PATH\nsetfacl -m g:GROUP:PERMS PATH\nsetfacl -d -m g:GROUP:PERMS DIR\nsetfacl -x u:USER PATH\nsetfacl -k DIR | setfacl -b PATH\ngetfacl -R DIR > acl.bak ; setfacl --restore=acl.bak',
+          options: [
+            ['-m', 'Modify or add entries'],
+            ['-x', 'Remove specific entries'],
+            ['-d', 'Apply the operation to the default ACL'],
+            ['-R', 'Recurse into directories'],
+            ['-b / -k', 'Remove all extended entries / remove the default ACL only'],
+            ['-n', 'Do not recalculate the mask'],
+            ['X (capital)', 'Execute only on directories or files that are already executable'],
+            ['--restore=FILE', 'Restore ACLs saved with getfacl -R']
+          ],
+          examples: [
+            {
+              title: 'Read an ACL with a restrictive mask',
+              cmd: 'getfacl /srv/reports/q3.csv',
+              out: 'getfacl: Removing leading \'/\' from absolute path names\n# file: srv/reports/q3.csv\n# owner: root\n# group: finance\nuser::rw-\nuser:alice:rw-\t\t#effective:r--\ngroup::r--\nmask::r--\nother::---',
+              fields: [
+                ['user:alice:rw-', 'Named user entry grants read and write'],
+                ['#effective:r--', 'Mask limits alice to read'],
+                ['mask::r--', 'Usually the result of a later chmod 640 or setfacl -n'],
+                ['other::---', 'No access for anyone else']
+              ],
+              note: 'Fix with `setfacl -m m::rw /srv/reports/q3.csv` or re-run `setfacl -m u:alice:rw` which recalculates the mask.'
+            },
+            {
+              title: 'Default ACL on a team directory',
+              cmd: 'sudo setfacl -m g:web:rwX /srv/site; sudo setfacl -d -m g:web:rwX /srv/site; getfacl -p /srv/site',
+              out: '# file: /srv/site\n# owner: root\n# group: root\n# flags: -s-\nuser::rwx\ngroup::r-x\ngroup:web:rwx\nmask::rwx\nother::r-x\ndefault:user::rwx\ndefault:group::r-x\ndefault:group:web:rwx\ndefault:mask::rwx\ndefault:other::r-x',
+              fields: [
+                ['# flags: -s-', 'setgid is set on the directory'],
+                ['group:web:rwx', 'Access entry - applies to the directory itself'],
+                ['default:group:web:rwx', 'Template copied to new files and subdirectories'],
+                ['default:mask::rwx', 'Mask that new objects will start with']
+              ]
+            },
+            {
+              title: 'Spot an ACL from ls',
+              cmd: 'ls -l /var/log/app.log',
+              out: '-rw-r-----+ 1 app app 81234 Oct  9 10:11 /var/log/app.log',
+              fields: [['+', 'An extended ACL exists; group bits r-- shown here are the mask']]
+            }
+          ],
+          walkthrough: [
+            'Create a test file and run `getfacl` on it; note there is no mask without named entries.',
+            'Grant a user: `setfacl -m u:nobody:r file`, then `ls -l` to see the `+`.',
+            'Run `chmod 600 file` and `getfacl file` - observe `#effective:---` for the named user.',
+            'Add a default ACL to a directory with `setfacl -d -m g:wheel:rwX dir` and create a file inside; run getfacl on the new file.',
+            'Back up ACLs: `getfacl -R dir > /tmp/acl.bak`, remove them with `setfacl -R -b dir`, restore with `setfacl --restore=/tmp/acl.bak` from the same working directory.',
+            'Copy the file with `cp` and with `cp -a` and compare the ACLs of the copies.'
+          ],
+          lab: {
+            goal: 'Grant an auditor read-only access to an application log directory, including future files, without changing ownership.',
+            steps: [
+              'Prepare: `sudo useradd auditor; sudo mkdir -p /srv/applogs; sudo touch /srv/applogs/app.log; sudo chmod 750 /srv/applogs; sudo chmod 640 /srv/applogs/app.log`.',
+              'Grant existing content: `sudo setfacl -R -m u:auditor:rX /srv/applogs`.',
+              'Grant future content: `sudo setfacl -d -m u:auditor:rX /srv/applogs`.',
+              'Create a new file as root: `sudo touch /srv/applogs/new.log` and run `getfacl /srv/applogs/new.log`.',
+              'Test: `sudo -u auditor cat /srv/applogs/app.log` succeeds; `sudo -u auditor touch /srv/applogs/x` fails.',
+              'Save a backup: `cd / && sudo getfacl -R srv/applogs > /root/applogs.acl`.'
+            ],
+            verify: 'getfacl on both files shows `user:auditor:r--` with no `#effective` reduction; auditor can read but not create files; /root/applogs.acl exists.'
+          },
+          troubleshooting: {
+            scenario: 'A named-user ACL u:deploy:rwx exists on /opt/app/releases, yet deploy gets "Permission denied" creating files there.',
+            steps: [
+              'Evidence: `getfacl /opt/app/releases` - look for `#effective:` and the mask; `namei -l /opt/app/releases` to check execute on every parent; `ls -Zd` and `ausearch -m AVC -ts recent` for SELinux.',
+              'Hypothesis: a later `chmod 750` set the mask to r-x, limiting deploy to r-x; or a parent directory lacks x for deploy.',
+              'Fix: restore the mask with `sudo setfacl -m m::rwx /opt/app/releases` (or re-apply the user entry), and add `u:deploy:x` on any parent missing traverse permission.',
+              'Validate: `getfacl` shows no effective reduction and `sudo -u deploy touch /opt/app/releases/test` works; remove the test file.'
+            ]
+          },
+          mistakes: [
+            'Running chmod on a file with an ACL and unknowingly shrinking the mask, which revokes named-user access.',
+            'Setting only a default ACL and expecting existing files to change - use -R -m for existing content as well.',
+            'Using lowercase x recursively, which makes every regular file executable - use capital X.',
+            'Copying with plain cp, tar without --acls, or rsync without -A and losing ACLs on the destination.',
+            'Forgetting that every parent directory still needs execute (traverse) for the user.'
+          ],
+          safety: [
+            'Back up ACLs before bulk changes: `getfacl -R DIR > backup.acl`; restore with `setfacl --restore=backup.acl` from the same working directory.',
+            '`setfacl -R -b` removes all extended entries in a tree and can break applications - preview with `getfacl -R -s` (lists only files with extended ACLs) first.',
+            'Changing ACLs on paths owned by packages may be reported by `rpm -V`; document the change in configuration management.'
+          ],
+          distro: 'The acl package (getfacl/setfacl) is installed by default on RHEL 8/9/10 and on most Debian/Ubuntu installs. XFS and ext4 support ACLs by default on both families. NFSv4 uses a different ACL model (nfs4_getfacl/nfs4_setfacl); POSIX ACL tools may not apply on NFSv4 mounts.',
+          challenge: {
+            task: 'In /srv/proj (group proj, setgid), team proj needs rw on everything now and in future, group qa needs read-only, and nobody else any access. A developer later runs `chmod 640` on one file and QA complains they still can read but proj members cannot write it. Explain and fix.',
+            solution: `Setup:
+\`\`\`
+sudo chmod 2770 /srv/proj
+sudo setfacl -R -m g:proj:rwX,g:qa:rX,o::--- /srv/proj
+sudo setfacl -R -d -m g:proj:rwX,g:qa:rX,o::--- /srv/proj
+\`\`\`
+After \`chmod 640 file\`, the group bits (4 = r--) became the **mask**, so g:proj:rw is effectively r--, while g:qa:r is unaffected. Fix:
+\`\`\`
+sudo setfacl -m m::rw /srv/proj/file
+getfacl /srv/proj/file    # no #effective reductions
+\`\`\`
+Prevent it by telling users to use setfacl rather than chmod on ACL-managed trees.`
+          },
+          interview: [
+            {
+              q: 'What is the ACL mask?',
+              a: 'The maximum permissions granted to named users, named groups and the owning group. Effective access is the entry ANDed with the mask. On a file with an ACL, chmod and ls group bits operate on the mask.',
+              mistake: 'Confusing it with umask.',
+              followUp: 'Which entries are not limited by the mask?'
+            },
+            {
+              q: 'What is a default ACL and when does it apply?',
+              a: 'An ACL on a directory that is copied to new files and subdirectories created inside it. It does not change existing files and replaces umask processing for new files.',
+              mistake: 'Saying it applies retroactively to existing files.',
+              followUp: 'How do you apply the same access to existing files?'
+            },
+            {
+              q: 'How do you migrate a directory tree to another server keeping ACLs?',
+              a: 'Use rsync -aAX, or tar --acls --xattrs on both ends, or back up with getfacl -R and restore with setfacl --restore. Verify with getfacl on samples.',
+              mistake: 'Using plain scp -r or cp -r.',
+              followUp: 'What else does -X preserve and why does it matter on RHEL?'
+            }
+          ],
+          revision: [
+            'ls -l shows + when an extended ACL exists.',
+            'Effective = named entry AND mask; chmod g= changes the mask.',
+            'setfacl -m add, -x remove, -b remove all, -k remove default, -d default, -R recurse.',
+            'Default ACLs apply to new objects only and override umask.',
+            'Use capital X and preserve ACLs with cp -a, tar --acls, rsync -A.'
+          ]
+        }
+      ]
+    },
+    {
+      id: 'L04-M5', title: 'Privilege management',
+      summary: 'Switching identity with su, delegating administration with sudo and sudoers drop-ins, and continuously auditing who holds privilege on a system.',
+      lessons: [
+        {
+          id: 'L04-M5-T1',
+          title: 'su, sudo, sudoers, visudo and /etc/sudoers.d',
+          minutes: 40,
+          objectives: [
+            'Contrast su, su - and sudo, including which password each asks for',
+            'Read and write sudoers rules, aliases and Defaults safely with visudo',
+            'Delegate a narrow set of commands through a drop-in in /etc/sudoers.d',
+            'Check what a user may run with sudo -l and validate syntax with visudo -c'
+          ],
+          prereqs: ['L04-M1-T2', 'L04-M2-T1'],
+          concept: `Administration needs root, but logging in as root hides *who* did what and gives every action unlimited power. Linux offers two ways to elevate.
+
+### su - switch user
+\`su\` starts a shell as another user (root by default) after you type **that user's** password.
+- \`su\` keeps most of your environment (PATH, current directory).
+- \`su -\` (or \`su -l\`) starts a **login shell**: clean environment, target user's home, their profile scripts. Prefer it to avoid running root with a user's PATH.
+- \`su - oracle -c 'cmd'\` runs one command.
+
+Sharing the root password with a team means no individual accountability and painful rotation.
+
+### sudo - delegated, logged privilege
+\`sudo cmd\` runs one command as root (or another user with \`-u\`) after you type **your own** password, if the security policy in \`/etc/sudoers\` allows it. Every use is logged with the caller's name. After a successful authentication, a timestamp lets you skip the password for 5 minutes by default (per terminal); \`sudo -k\` drops it.
+
+Useful forms: \`sudo -i\` (root login shell), \`sudo -u postgres psql\`, \`sudo -l\` (list what I may run), \`sudoedit /etc/file\` (edit as root with your own unprivileged editor).
+
+### sudoers rule syntax
+\`\`\`
+WHO   WHERE = (AS_USER[:AS_GROUP])  [TAGS:] COMMANDS
+%wheel ALL  = (ALL)                        ALL
+alice  ALL  = (root) NOPASSWD: /usr/bin/systemctl restart httpd
+\`\`\`
+- \`%name\` means a group. RHEL ships \`%wheel ALL=(ALL) ALL\`, so adding a user to **wheel** makes them a full administrator.
+- Commands must be **full paths**; arguments, if given, must match exactly. A command with no arguments listed allows any arguments; \`""\` allows none.
+- Aliases (\`User_Alias\`, \`Cmnd_Alias\`, \`Host_Alias\`, \`Runas_Alias\`, names in CAPITALS) group items. \`Defaults\` lines tune behaviour (e.g. \`Defaults:alice timestamp_timeout=0\`).
+- When several rules match, the **last match wins**.
+
+### Edit safely: visudo and drop-ins
+A syntax error in sudoers can stop **everyone** using sudo. \`visudo\` locks the file, opens a copy, and refuses to save invalid syntax. \`/etc/sudoers\` on RHEL ends with \`#includedir /etc/sudoers.d\` (the \`#\` is part of the directive, not a comment), so put your rules in separate files:
+
+\`\`\`
+sudo visudo -f /etc/sudoers.d/web-ops
+sudo visudo -c        # check all sudoers files
+\`\`\`
+Drop-in files whose names contain a \`.\` or end in \`~\` are **ignored**, and files should be mode 0440 owned by root. Keep one file per purpose so rules can be deployed and removed by configuration management.
+
+### Dangerous delegations
+Allowing editors, pagers, interpreters, \`find\`, \`tar\` or \`systemctl edit\` gives a shell escape - effectively full root. Wildcards in arguments (\`/usr/bin/cat /var/log/*\`) can be abused with \`../\`. Delegate exact commands, use \`sudoedit\` for file editing, and prefer wrapper scripts owned by root.`,
+          internals: `\`sudo\` is a setuid-root binary. It reads its policy through the sudoers plugin (\`/etc/sudo.conf\` selects plugins), resolves the user's groups through NSS, authenticates through PAM (\`/etc/pam.d/sudo\`), then forks and executes the command with the target credentials, a sanitised environment (\`env_reset\`, \`secure_path\`) and, on RHEL, an SELinux context unchanged unless a role/type is specified. Timestamps are stored under \`/run/sudo/ts/USER\`, keyed by terminal (tty_tickets is the default).
+
+\`su\` is also setuid root; it uses \`/etc/pam.d/su\`. On RHEL you can restrict su to wheel members by enabling the \`pam_wheel.so use_uid\` line in that file.
+
+Each sudo invocation is logged via syslog (authpriv facility, \`/var/log/secure\` on RHEL) and the journal, and generates audit events (USER_CMD) when auditd runs.`,
+          useCases: [
+            'Letting a web team restart and check httpd without any other root rights',
+            'Giving a DBA a shell as the postgres user without knowing its password',
+            'Removing shared root passwords and gaining per-person audit trails',
+            'Deploying identical sudo policy to hundreds of hosts as a drop-in file'
+          ],
+          syntax: 'su [-] [USER] [-c CMD]\nsudo [-u USER] CMD\nsudo -i | sudo -s | sudo -l [-U USER] | sudo -k\nsudoedit FILE\nvisudo [-c] [-f FILE]\nUSER HOST=(RUNAS) [NOPASSWD:] /full/path/cmd [args]',
+          options: [
+            ['su -', 'Login shell as root with a clean environment'],
+            ['sudo -i', 'Root login shell through sudo (your password, logged)'],
+            ['sudo -l / -l -U alice', 'List allowed commands for yourself / for alice (root)'],
+            ['sudo -u USER', 'Run as a user other than root'],
+            ['visudo -f FILE', 'Edit a drop-in safely with syntax checking'],
+            ['visudo -c', 'Check syntax and permissions of sudoers and all included files'],
+            ['NOPASSWD:', 'Tag: skip authentication for the listed commands'],
+            ['sudoedit FILE', 'Edit a root-owned file without running the editor as root']
+          ],
+          examples: [
+            {
+              title: 'List a user\'s sudo rights',
+              cmd: 'sudo -l -U webop',
+              out: 'Matching Defaults entries for webop on web01:\n    !visiblepw, always_set_home, match_group_by_gid, always_query_group_plugin, env_reset, secure_path=/sbin\\:/bin\\:/usr/sbin\\:/usr/bin\n\nUser webop may run the following commands on web01:\n    (root) NOPASSWD: /usr/bin/systemctl restart httpd, /usr/bin/systemctl status httpd',
+              fields: [
+                ['env_reset', 'Environment is cleaned before running the command'],
+                ['secure_path=...', 'PATH used for the command, ignoring the caller\'s PATH'],
+                ['(root) NOPASSWD:', 'Runs as root without asking for a password'],
+                ['/usr/bin/systemctl restart httpd', 'Only this exact command and arguments are allowed']
+              ]
+            },
+            {
+              title: 'Create and validate a drop-in',
+              cmd: 'sudo visudo -f /etc/sudoers.d/web-ops; sudo visudo -c',
+              out: '/etc/sudoers: parsed OK\n/etc/sudoers.d/web-ops: parsed OK',
+              fields: [['parsed OK', 'Syntax valid; visudo -c also warns about wrong owner or mode']],
+              note: 'Content of the drop-in: `Cmnd_Alias WEB = /usr/bin/systemctl restart httpd, /usr/bin/systemctl status httpd` and `%webops ALL=(root) WEB`.'
+            },
+            {
+              title: 'A denied attempt',
+              cmd: 'sudo systemctl stop sshd',
+              out: 'Sorry, user webop is not allowed to execute \'/bin/systemctl stop sshd\' as root on web01.',
+              fields: [['not allowed to execute', 'The user has sudo rights, but not for this command; the attempt is logged']]
+            }
+          ],
+          walkthrough: [
+            'Compare `su` and `su -` by running `pwd; echo $PATH` in each (then exit).',
+            'Run `sudo -l` to see your own rights and identify the wheel rule.',
+            'Read `/etc/sudoers` with `sudo grep -v "^#" /etc/sudoers | grep -v "^$"` and find the `#includedir` line.',
+            'Create a drop-in with `sudo visudo -f /etc/sudoers.d/ops-status` granting `%ops ALL=(root) /usr/bin/systemctl status httpd, /usr/bin/systemctl status sshd` - explicit units, no wildcards.',
+            'Run `sudo visudo -c` and `ls -l /etc/sudoers.d`; ensure mode 0440 and owner root.',
+            'Test as a member with `sudo -l -U opsuser` before telling the user it is ready.'
+          ],
+          lab: {
+            goal: 'Delegate httpd restart/status to group webops through a validated drop-in, keeping a root session open as a safety net.',
+            steps: [
+              'Open a second terminal with `sudo -i` and leave it open until the end of the lab.',
+              'Create the group and user: `sudo groupadd webops; sudo useradd -G webops webop; sudo passwd webop`.',
+              'Write the rule: `sudo visudo -f /etc/sudoers.d/webops` with `%webops ALL=(root) /usr/bin/systemctl restart httpd, /usr/bin/systemctl status httpd`.',
+              'Validate: `sudo visudo -c` and `sudo chmod 0440 /etc/sudoers.d/webops`.',
+              'Check: `sudo -l -U webop`.',
+              'Test as webop: `su - webop -c "sudo systemctl status httpd"` works; `su - webop -c "sudo systemctl stop sshd"` is refused.'
+            ],
+            verify: '`sudo visudo -c` reports parsed OK for every file; sudo -l -U webop lists only the two commands; the refused attempt appears in `sudo grep webop /var/log/secure`.'
+          },
+          troubleshooting: {
+            scenario: 'After an engineer edited /etc/sudoers with vi, every sudo command fails with ">>> /etc/sudoers: syntax error near line 101 <<<" and "sudo: no valid sudoers sources found, quitting".',
+            steps: [
+              'Evidence: the error names the file and line; confirm nobody still has a root shell (`who`, existing sessions).',
+              'Hypothesis: a typo (missing comma, lower-case alias name, wrong path) broke parsing, so sudo refuses to run at all.',
+              'Fix: obtain root another way - an existing root shell, `su -` with the root password, the console, or `pkexec visudo` on hosts with polkit - then run `visudo` to correct the line (visudo shows the error and lets you re-edit).',
+              'Validate: `visudo -c` reports parsed OK, `sudo -l` works for an admin, and the change is moved into a drop-in managed by configuration management.'
+            ]
+          },
+          mistakes: [
+            'Editing /etc/sudoers with a plain editor - a syntax error disables sudo for everyone; always use visudo.',
+            'Naming a drop-in web.conf or web-ops~ - files with a dot or trailing tilde in /etc/sudoers.d are silently ignored.',
+            'Granting editors, less, find, tar, python or systemctl edit through sudo - they allow a shell escape to full root.',
+            'Assuming `%wheel` rules apply immediately to an existing session - group membership requires a new login.',
+            'Using wildcards in command arguments, which can match far more than intended.'
+          ],
+          safety: [
+            'Keep a root shell open while changing sudo or PAM configuration, and test from a second session before closing it.',
+            'Validate with `visudo -c` after every change and deploy drop-ins with mode 0440 root:root.',
+            'Prefer named groups and exact commands over NOPASSWD: ALL; review NOPASSWD rules regularly.'
+          ],
+          distro: 'RHEL grants admin rights via group **wheel** (`%wheel ALL=(ALL) ALL`); Debian/Ubuntu use group **sudo** (`%sudo ALL=(ALL:ALL) ALL`). RHEL 9/10 ship sudo 1.9, which also accepts `@includedir` (the legacy `#includedir` still works). On RHEL 9 and later the installer can leave root locked and create an admin user in wheel; root SSH password login is disabled by default (`PermitRootLogin prohibit-password`).',
+          challenge: {
+            task: 'Group dba must be able to (1) run any command as user postgres, (2) restart postgresql as root, and nothing else as root. Write the drop-in, validate it, and show how a member gets a postgres shell.',
+            solution: `\`\`\`
+sudo visudo -f /etc/sudoers.d/dba
+# content:
+Cmnd_Alias PGSVC = /usr/bin/systemctl restart postgresql, /usr/bin/systemctl status postgresql
+%dba ALL=(postgres) ALL
+%dba ALL=(root) PGSVC
+
+sudo chmod 0440 /etc/sudoers.d/dba
+sudo visudo -c
+sudo -l -U dbauser
+\`\`\`
+A member opens a postgres shell with \`sudo -iu postgres\` using their own password - nobody needs the postgres password. The root rule lists exact commands with arguments, so \`systemctl stop sshd\` remains denied. The file name has no dot so it is not ignored.`
+          },
+          interview: [
+            {
+              q: 'What is the difference between su and sudo?',
+              a: 'su switches to another user and needs that user\'s password; sudo runs commands per a policy and needs the caller\'s own password, logs each command under the caller\'s name, and can be restricted to specific commands.',
+              mistake: 'Saying they are the same except for the name.',
+              followUp: 'What does su - change compared with su?'
+            },
+            {
+              q: 'Why must you use visudo?',
+              a: 'It locks the file and validates syntax before saving. A broken sudoers makes sudo refuse to run, which can lock out all administrators on hosts without a root password.',
+              mistake: 'Answering only "because it is the convention".',
+              followUp: 'How do you recover if sudoers is already broken?'
+            },
+            {
+              q: 'Why is "alice ALL=(root) /usr/bin/vim" dangerous?',
+              a: 'vim can run shell commands (:!bash), so alice gets a root shell. Use sudoedit, which runs the editor as alice on a temporary copy and writes back as root.',
+              mistake: 'Thinking only ALL is dangerous.',
+              followUp: 'Name other binaries with shell escapes.'
+            },
+            {
+              q: 'A drop-in /etc/sudoers.d/app.conf seems to have no effect. Why?',
+              a: 'Files in sudoers.d containing a dot or ending with ~ are skipped. Rename it (e.g. app) and validate with visudo -c.',
+              mistake: 'Restarting a sudo service - there is none; sudo reads the policy on every run.',
+              followUp: 'What permissions should the file have?'
+            }
+          ],
+          revision: [
+            'su needs the target\'s password; sudo needs yours and logs each command.',
+            'su - / sudo -i give login shells with clean environments.',
+            'Rule: WHO WHERE=(RUNAS) [NOPASSWD:] /full/path [args]; %group; last match wins.',
+            'RHEL: wheel = admins; #includedir /etc/sudoers.d; names with . or ~ ignored; mode 0440.',
+            'Always visudo / visudo -f / visudo -c; avoid shell-escape commands, use sudoedit.'
+          ]
+        },
+        {
+          id: 'L04-M5-T2',
+          title: 'Least privilege and auditing privileges',
+          minutes: 35,
+          objectives: [
+            'Inventory setuid/setgid files with find -perm and compare them with the RPM database',
+            'Review sudo usage and failures in /var/log/secure, the journal and the audit log',
+            'Review privileged group membership and sudo rules for every account',
+            'Review account expiry and inactivity to remove stale privilege'
+          ],
+          prereqs: ['L04-M4-T1', 'L04-M5-T1', 'L04-M2-T2'],
+          concept: `**Least privilege** means every account, service and process has only the access its job requires, for only as long as it needs it. Privilege tends to grow: people change roles, contractors leave, someone adds a setuid helper "just for now". A sysadmin's job is to **inventory, review and remove** privilege regularly, with evidence.
+
+### Where privilege hides on a Linux host
+1. **UID 0 accounts** - anything other than root is suspicious (M1).
+2. **Privileged groups** - \`wheel\` (full sudo on RHEL), plus groups named in sudoers rules.
+3. **sudoers rules** - especially \`ALL\`, \`NOPASSWD\`, and commands with shell escapes.
+4. **setuid/setgid executables** - run with their owner's or group's identity.
+5. **File capabilities** - fine-grained root powers on binaries (\`getcap\`).
+6. **Stale accounts** - users who left but whose account, keys or group memberships remain.
+
+### Finding special-bit files
+\`find\` has three \`-perm\` forms:
+- \`-perm -4000\` - **all** of these bits set (setuid, any other bits).
+- \`-perm /6000\` - **any** of these bits (setuid **or** setgid).
+- \`-perm 4755\` - **exactly** this mode.
+
+\`\`\`
+sudo find / -xdev -type f -perm /6000 -exec ls -l {} + 2>/dev/null
+\`\`\`
+Then decide for each file: does a package own it (\`rpm -qf FILE\`) and is it unmodified (\`rpm -Vf FILE\`, where \`M\` = mode differs and \`5\` = content differs)? A setuid file that **no package owns**, in a home directory, \`/tmp\` or \`/dev/shm\`, is a red flag. Keep a **baseline** list and compare it after changes.
+
+### Reviewing sudo activity
+Every sudo use is logged. On RHEL look in \`/var/log/secure\` and \`journalctl _COMM=sudo\`; with auditd, \`ausearch -m USER_CMD\`. Look for "incorrect password attempts", "user NOT in sudoers", and commands that should not be run.
+
+### Reviewing accounts and expiry
+- \`getent group wheel\` - who has full sudo.
+- \`sudo -l -U user\` - what a specific user can run.
+- \`chage -l user\` - password age, inactivity and **account expiry**; set expiry for contractors with \`chage -E YYYY-MM-DD\` or \`usermod -e\`.
+- \`last\` / \`lastlog\` - when accounts last logged in; long-unused privileged accounts should be locked and expired.
+
+Removing privilege is a change: record it, notify owners, and have a rollback.`,
+          internals: `\`find -perm\` compares the requested bits with each inode's mode: the \`-\` form tests \`(mode & bits) == bits\`, the \`/\` form tests \`(mode & bits) != 0\`. \`rpm -V\` compares installed files with the size, digest, mode, owner and group recorded in the RPM database and prints a nine-character code (S 5 M D L U G T P) for each difference.
+
+sudo writes its log line through syslog with facility authpriv; rsyslog routes \`authpriv.*\` to \`/var/log/secure\`, and journald stores it with \`_COMM=sudo\`. With auditd, PAM generates USER_AUTH / USER_ACCT events and sudo emits USER_CMD with the command (hex-encoded when it contains spaces; \`ausearch -i\` decodes). Account expiry is the shadow field 8; once passed, PAM's account stage (\`pam_unix\`) rejects logins, including SSH key logins, which is why expiry is a stronger off-boarding control than locking the password.`,
+          useCases: [
+            'Quarterly access review evidence for an auditor (who is in wheel, who has NOPASSWD)',
+            'Detecting a planted setuid shell after a compromise',
+            'Automatically expiring contractor accounts at the end of the contract',
+            'Investigating who restarted a service at 03:00 using sudo logs'
+          ],
+          syntax: 'find / -xdev -type f -perm /6000 [-ls]\nfind / -xdev -perm -4000 -user root\nrpm -qf FILE ; rpm -Vf FILE\ngetcap -r / 2>/dev/null\ngrep sudo /var/log/secure ; journalctl _COMM=sudo\nausearch -m USER_CMD -i\nchage -l USER ; chage -E YYYY-MM-DD USER\nlastlog -b 90 ; last USER',
+          options: [
+            ['-perm -4000', 'Match files with at least the setuid bit'],
+            ['-perm /6000', 'Match files with setuid or setgid'],
+            ['-xdev', 'Do not descend into other filesystems (skip /proc, NFS...)'],
+            ['rpm -Vf FILE', 'Verify a file against the package database (M = mode changed)'],
+            ['journalctl _COMM=sudo --since', 'sudo events from the journal'],
+            ['chage -E -1 USER', 'Remove the account expiry date'],
+            ['lastlog -b 90', 'Accounts whose last login is more than 90 days ago']
+          ],
+          examples: [
+            {
+              title: 'Inventory setuid/setgid files and spot an outsider',
+              cmd: 'sudo find / -xdev -type f -perm /6000 -printf "%m %u:%g %p\\n" 2>/dev/null | sort -k3',
+              out: '4755 root:root /home/jdoe/.cache/.x\n4755 root:root /usr/bin/chage\n4755 root:root /usr/bin/passwd\n4111 root:root /usr/bin/sudo\n2755 root:utmp /usr/libexec/utempter/utempter',
+              fields: [
+                ['4755 /home/jdoe/.cache/.x', 'setuid-root file in a home directory - not from any package; treat as an incident'],
+                ['4111 /usr/bin/sudo', 'Expected setuid binary'],
+                ['2755 root:utmp', 'setgid helper owned by a package']
+              ],
+              note: 'Confirm with `rpm -qf /home/jdoe/.cache/.x` ("not owned by any package") and preserve evidence before removing it.'
+            },
+            {
+              title: 'Read sudo log lines',
+              cmd: 'sudo grep sudo /var/log/secure | tail -3',
+              out: 'Oct  9 03:02:11 web01 sudo[41233]:   alice : TTY=pts/1 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/systemctl restart httpd\nOct  9 03:05:40 web01 sudo[41301]:     bob : user NOT in sudoers ; TTY=pts/2 ; PWD=/home/bob ; USER=root ; COMMAND=/bin/bash\nOct  9 03:06:02 web01 sudo[41320]:   carol : 3 incorrect password attempts ; TTY=pts/3 ; PWD=/home/carol ; USER=root ; COMMAND=/usr/bin/cat /etc/shadow',
+              fields: [
+                ['alice : ... COMMAND=', 'Successful command, with caller, terminal, directory and target user'],
+                ['user NOT in sudoers', 'bob has no sudo rights at all and tried to get a root shell'],
+                ['3 incorrect password attempts', 'Possible password guessing or a forgotten password']
+              ]
+            },
+            {
+              title: 'Review an account\'s expiry',
+              cmd: 'sudo chage -l contractor1',
+              out: 'Last password change\t\t\t\t\t: Jul 01, 2026\nPassword expires\t\t\t\t\t: Sep 29, 2026\nPassword inactive\t\t\t\t\t: Oct 13, 2026\nAccount expires\t\t\t\t\t\t: Dec 31, 2026\nMinimum number of days between password change\t\t: 1\nMaximum number of days between password change\t\t: 90\nNumber of days of warning before password expires\t: 7',
+              fields: [
+                ['Account expires: Dec 31, 2026', 'After this date all logins are refused'],
+                ['Password inactive', 'Date after which an expired password can no longer be changed at login']
+              ]
+            }
+          ],
+          walkthrough: [
+            'Create a baseline: `sudo find / -xdev -type f -perm /6000 2>/dev/null | sort > /root/suid-baseline.txt`.',
+            'For each entry run `rpm -qf` and note any file not owned by a package.',
+            'Run `rpm -Va 2>/dev/null | grep "^..M"` to find packaged files whose mode was changed.',
+            'List privileged people: `getent group wheel` and `sudo grep -rhv "^#" /etc/sudoers.d`.',
+            'Review the last week of sudo use: `sudo journalctl _COMM=sudo --since "-7d" | grep -E "NOT in sudoers|incorrect password|COMMAND"`.',
+            'Find dormant accounts: `sudo lastlog -b 90` and check their expiry with `chage -l`.'
+          ],
+          lab: {
+            goal: 'Produce a small privilege-review report and remediate one stale account and one unexpected setuid file safely.',
+            steps: [
+              'Plant a test finding: `sudo cp /usr/bin/id /tmp/idcopy && sudo chmod 4755 /tmp/idcopy` (lab VM only).',
+              'Scan: `sudo find / -xdev -type f -perm -4000 -printf "%p\\n" 2>/dev/null | while read f; do rpm -qf "$f" >/dev/null 2>&1 || echo "UNOWNED $f"; done`.',
+              'Remediate the finding: `sudo chmod u-s /tmp/idcopy` then `sudo rm /tmp/idcopy`, recording the action.',
+              'Create a test contractor: `sudo useradd -G wheel temp1` and set expiry: `sudo chage -E $(date -d "+30 days" +%F) temp1`.',
+              'Remove the unnecessary privilege: `sudo gpasswd -d temp1 wheel` and confirm `getent group wheel`.',
+              'Check sudo log evidence: `sudo journalctl _COMM=sudo --since today | tail`.'
+            ],
+            verify: 'The scan prints UNOWNED /tmp/idcopy before remediation and nothing afterwards; `chage -l temp1` shows an Account expires date; temp1 is no longer listed in `getent group wheel`.'
+          },
+          troubleshooting: {
+            scenario: 'A weekly scan reports a new setuid-root file /usr/local/bin/backup-helper that is not in last week\'s baseline.',
+            steps: [
+              'Evidence: `ls -l`, `stat`, `rpm -qf` (not owned), `sha256sum`, file type with `file`, and who installed it (`ausearch -f /usr/local/bin/backup-helper -i`, change tickets, /var/log/secure around its ctime).',
+              'Hypothesis: either an undocumented admin change for a backup tool, or a persistence mechanism left by an attacker.',
+              'Fix: if unexplained, treat as a security incident - preserve a copy and evidence, remove the setuid bit (`chmod u-s`), and escalate; if legitimate, replace it with a sudo rule or a capability-limited service and document it.',
+              'Validate: rerun the scan, confirm it matches the approved baseline, and add the check to monitoring.'
+            ]
+          },
+          mistakes: [
+            'Mixing up -perm -4000 (at least setuid) and -perm 4000 (exactly 4000, which matches almost nothing).',
+            'Scanning without -xdev and spending hours in network filesystems or getting /proc noise.',
+            'Only locking the password of a departed user - SSH keys may still work; expire the account (chage -E 0 or a past date) and remove keys and group memberships.',
+            'Deleting a suspicious file immediately and destroying forensic evidence.',
+            'Reviewing wheel membership but ignoring rules for other groups in /etc/sudoers.d.'
+          ],
+          safety: [
+            'Do not strip setuid from packaged binaries (passwd, sudo, su) - it breaks password changes and administration; verify with rpm before changing anything.',
+            'Removing someone\'s privilege can stop production work; confirm with the account owner or manager and record the change and rollback (re-adding the group).',
+            'Treat unexplained setuid files and UID 0 accounts as potential incidents: preserve evidence before remediation.'
+          ],
+          distro: 'On Debian/Ubuntu use `dpkg -S FILE` instead of `rpm -qf` and `debsums` or `dpkg --verify` instead of `rpm -V`; auth logs go to /var/log/auth.log and the admin group is sudo. RHEL 9 uses /var/log/secure via rsyslog plus the journal. Newer distributions are moving from `lastlog` to `lastlog2`; check which your release ships. File capabilities (getcap) are increasingly used instead of setuid on RHEL 9/10.',
+          challenge: {
+            task: 'Write a one-screen review that prints: (1) setuid/setgid files not owned by any RPM, (2) members of wheel, (3) every sudoers rule containing NOPASSWD, (4) accounts with UID >= 1000 that have no account expiry set. Explain how you would act on each section.',
+            solution: `\`\`\`
+echo "== Unowned setuid/setgid"; sudo find / -xdev -type f -perm /6000 2>/dev/null | while read f; do rpm -qf "$f" >/dev/null 2>&1 || echo "$f"; done
+echo "== wheel"; getent group wheel
+echo "== NOPASSWD"; sudo grep -rn NOPASSWD /etc/sudoers /etc/sudoers.d
+echo "== No expiry"; sudo awk -F: '$8=="" {print $1}' /etc/shadow | while read u; do id -u "$u" 2>/dev/null | awk -v u="$u" '$1>=1000 && $1<60000 {print u}'; done
+\`\`\`
+Actions: (1) unowned special-bit files are investigated as possible compromise, evidence preserved, then removed or replaced by a sudo rule; (2) each wheel member is confirmed with their manager, others removed with \`gpasswd -d\`; (3) NOPASSWD rules are justified (automation accounts) or removed; (4) contractors and temporary accounts receive \`chage -E\` dates. Each change is ticketed with rollback.`
+          },
+          interview: [
+            {
+              q: 'How do you find all setuid files on a server and decide which are legitimate?',
+              a: 'find / -xdev -type f -perm -4000 (or /6000 to include setgid), then rpm -qf to see if a package owns each file and rpm -Vf to see if it was modified, comparing with a baseline. Unowned or modified files are investigated.',
+              mistake: 'Stopping at the find output without verifying ownership.',
+              followUp: 'What is the difference between -perm -4000 and -perm /6000?'
+            },
+            {
+              q: 'An employee left yesterday. What do you do with their Linux account?',
+              a: 'Expire the account (chage -E 0 or usermod -e with a past date) so all PAM logins including SSH keys fail, lock the password, remove privileged group memberships and sudo rules, remove or archive authorized_keys, check for their cron jobs and running processes, then delete or archive per retention policy.',
+              mistake: 'Only running passwd -l.',
+              followUp: 'Where would you check if they used sudo recently?'
+            },
+            {
+              q: 'Where are sudo events logged on RHEL?',
+              a: 'Through syslog authpriv to /var/log/secure, in the journal (journalctl _COMM=sudo), and as USER_CMD audit records if auditd is running.',
+              mistake: 'Saying ~/.bash_history.',
+              followUp: 'How would you send these logs off-host for tamper resistance?'
+            }
+          ],
+          revision: [
+            'Least privilege: inventory, justify, remove, and repeat regularly.',
+            'find -perm -4000 = at least setuid; -perm /6000 = setuid or setgid; use -xdev.',
+            'rpm -qf / rpm -Vf separate packaged binaries from planted or modified ones.',
+            'sudo logs: /var/log/secure, journalctl _COMM=sudo, ausearch -m USER_CMD.',
+            'Off-boarding: expire the account (chage -E), not just lock the password; review wheel and sudoers.d.'
+          ]
+        }
+      ]
     }
   ]
 };

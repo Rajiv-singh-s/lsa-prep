@@ -716,7 +716,7 @@ export const textCommands = [
       const text = ctx.stdin ?? '';
       if (ctx.stdin === null) return fail(ctx, '(simulator) tr reads standard input only — pipe data into it');
       const s1 = expandTrSet(rest[0]), s2 = rest[1] !== undefined ? expandTrSet(rest[1]) : '';
-      let result = '';
+      let result;
       if (o.d) result = [...text].filter(c => !s1.includes(c)).join('');
       else if (s2) result = [...text].map(c => { const i = s1.indexOf(c); return i < 0 ? c : s2[Math.min(i, s2.length - 1)]; }).join('');
       else result = text;

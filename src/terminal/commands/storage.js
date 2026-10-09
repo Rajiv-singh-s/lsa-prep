@@ -167,7 +167,7 @@ function mountNfs(ctx, spec, abs, options) {
 }
 
 export function parseFstab(sys) {
-  let text = '';
+  let text;
   try { text = sys.fs.readFile('/etc/fstab', '/'); } catch { return []; }
   return text.split('\n').map((l, i) => ({ l: l.trim(), line: i + 1 })).filter(x => x.l && !x.l.startsWith('#')).map(x => {
     const [spec, mp, type, opts = 'defaults', dump = '0', pass = '0'] = x.l.split(/\s+/);
@@ -236,6 +236,8 @@ function lvmReport(ctx, kind) {
 }
 
 function addDevNode(sys, path) {
+  const dir = path.slice(0, path.lastIndexOf('/'));
+  if (!sys.fs.exists(dir)) sys.fs.create(dir, '/', S_IFDIR, { mode: 0o755, umask: 0 });
   if (!sys.fs.exists(path)) { const n = sys.fs.create(path, '/', S_IFBLK, { mode: 0o660, umask: 0 }); n.gid = 6; }
 }
 
@@ -728,12 +730,12 @@ export function applyAutofs(sys, ctx) {
   if (dd) for (const f of sys.fs.list(dd.node)) if (f.endsWith('.autofs')) masterFiles.push(`/etc/auto.master.d/${f}`);
   const results = [];
   for (const mf of masterFiles) {
-    let text = '';
+    let text;
     try { text = sys.fs.readFile(mf, '/'); } catch { continue; }
     for (const l of text.split('\n')) {
       const [base, map] = l.trim().split(/\s+/);
       if (!base || base.startsWith('#') || base.startsWith('+') || !map?.startsWith('/etc/') || base === '/misc') continue;
-      let mapText = '';
+      let mapText;
       try { mapText = sys.fs.readFile(map, '/'); } catch { results.push(`autofs: map ${map} not found`); continue; }
       if (!sys.fs.exists(base)) sys.fs.create(base, '/', S_IFDIR, { mode: 0o755, umask: 0 });
       for (const ml of mapText.split('\n')) {

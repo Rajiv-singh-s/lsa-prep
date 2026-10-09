@@ -4,6 +4,7 @@
 import { S_IFDIR, S_IFLNK, S_IFREG, normalizePath } from '../vfs.js';
 import { addProcess, userByName, ctxType } from '../system.js';
 import { columns } from './util.js';
+import { applyAutofs } from './storage.js';
 
 const UNIT_DIRS = ['/etc/systemd/system', '/run/systemd/system', '/usr/lib/systemd/system'];
 
@@ -141,6 +142,12 @@ export function avc(sys, perm, comm, extra) {
 
 /** Start a service. Returns { ok, message } and updates runtime state + journal. */
 export function startService(sys, name, shell) {
+  if (/\.(timer|socket|path|mount)$/.test(name)) {
+    if (!findUnitFile(sys, name)) return { ok: false, code: 5, message: `Failed to start ${name}: Unit ${name} not found.` };
+    (sys.activeUnits ||= {})[name] = 'active';
+    journal(sys, name, 6, `Started ${name}.`);
+    return { ok: true };
+  }
   const unit = `${name}.service`;
   const f = findUnitFile(sys, unit);
   if (!f) return { ok: false, code: 5, message: `Failed to start ${unit}: Unit ${unit} not found.` };
@@ -214,6 +221,7 @@ export function startService(sys, name, shell) {
   svc.failReason = null;
   svc.lastStatus = null;
   journal(sys, unit, 6, `Started ${unit} - ${svc.description}.`);
+  if (name === 'autofs') for (const msg of applyAutofs(sys, { sys, cwd: '/', error: () => {} })) journal(sys, unit, 6, msg, 'automount');
   return { ok: true };
 }
 
@@ -427,6 +435,7 @@ export const serviceCommands = [
             if (!r) continue;
             for (const f of sys.fs.list(r.node)) if (f.endsWith('.service') && !seen.has(f)) { seen.add(f); const s = sys.services[baseName(f)]; if (!s?.package || sys.packages.installed[s.package]) loadUnit(sys, f); }
           }
+          sys.lastDaemonReload = sys.clock();
           journal(sys, null, 6, 'Reloading requested from client PID ' + (sys.nextPid) + ' (\'systemctl\')...');
           return 0;
         }

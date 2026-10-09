@@ -158,7 +158,7 @@ export class VFS {
 
   isReadOnly(abs) {
     let best = null;
-    for (const [mp, m] of this.mounts) {
+    for (const mp of this.mounts.keys()) {
       if ((abs === mp || abs.startsWith(mp === '/' ? '/' : mp + '/')) && (!best || mp.length > best.length)) best = mp;
     }
     return best ? !!this.mounts.get(best).readonly : false;

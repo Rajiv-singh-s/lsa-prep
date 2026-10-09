@@ -949,3 +949,666 @@ grep ':/bin/bash$' /etc/passwd | cut -d: -f1 | sort | paste -sd,
     }
   ]
 };
+
+const M4 = {
+  id: 'L02-M4',
+  title: 'Pipes, redirection, exit codes and chaining',
+  summary: 'Control where a command reads input and writes output and errors, connect commands with pipes, tee and xargs, and use exit codes with &&, || and ; to build reliable one-liners.',
+  lessons: [
+    {
+      id: 'L02-M4-T1',
+      title: 'Standard streams and redirection (stdin, stdout, stderr, >, >>, 2>, 2>&1, <)',
+      minutes: 40,
+      objectives: [
+        'Name the three standard streams and their file descriptor numbers',
+        'Redirect output with >, >>, 2>, &> and 2>&1 and predict the effect of their order',
+        'Feed input from a file with < and from inline text with here-documents and here-strings',
+        'Discard noise safely with /dev/null and protect files with set -o noclobber'
+      ],
+      prereqs: ['L02-M2-T2'],
+      concept: `Every process starts with three open **file descriptors** (FDs), small integers that refer to open files:
+
+- **0 = standard input (stdin)** - where the program reads input; by default the keyboard/terminal
+- **1 = standard output (stdout)** - normal results; by default the terminal
+- **2 = standard error (stderr)** - error and diagnostic messages; also the terminal by default
+
+Because stdout and stderr are *separate* streams that happen to share a screen, you can send them to different places. **Redirection** is the shell rewiring these descriptors *before* the command starts; the command itself does not know or care.
+
+- **\`> file\`** sends stdout to a file, **truncating** (emptying) it first or creating it.
+- **\`>> file\`** appends stdout to the end of the file.
+- **\`2> file\`** sends stderr to a file; \`2>> file\` appends.
+- **\`2>&1\`** means "make FD 2 point wherever FD 1 points *right now*".
+- **\`&> file\`** (Bash) sends both stdout and stderr to the file; \`&>> file\` appends both.
+- **\`< file\`** connects stdin to a file: \`wc -l < /etc/passwd\` prints only the number because wc never sees a file name.
+
+**Order matters** because redirections are processed left to right. \`cmd > out.log 2>&1\` first points stdout at out.log, then copies that to stderr, so both land in the file. \`cmd 2>&1 > out.log\` first copies stderr to *the terminal* (where stdout currently points), then moves only stdout to the file - errors still appear on screen.
+
+**/dev/null** is a special device that discards everything written to it and returns end-of-file when read. \`find / -name x 2>/dev/null\` hides "Permission denied" noise - but you also hide real errors, so do it deliberately.
+
+Two input conveniences: a **here-document** feeds several literal lines to stdin until a delimiter:
+
+\`\`\`
+cat > /etc/motd <<'EOF'
+Authorised use only
+EOF
+\`\`\`
+
+Quoting the delimiter (\`'EOF'\`) stops variable expansion inside the text. A **here-string** \`<<< "text"\` feeds a single string, e.g. \`tr a-z A-Z <<< "hello"\`.
+
+Finally, the most common accident is \`>\` over a file you needed. **\`set -o noclobber\`** makes \`>\` refuse to overwrite existing files (use \`>|\` to force when you mean it).`,
+      internals: `Before running a command the shell forks a child; in the child it calls \`open()\` on the target file (with \`O_TRUNC\` for \`>\`, \`O_APPEND\` for \`>>\`) and then \`dup2()\` to place the new descriptor onto 0, 1 or 2, closing the temporary one. Only then does it call \`execve()\`. The new program inherits the descriptor table unchanged, which is why redirection works for every program without special support. \`2>&1\` is literally \`dup2(1, 2)\`: FD 2 becomes a copy of whatever FD 1 refers to at that moment, which explains the order rule. You can inspect a running process's descriptors as symlinks under \`/proc/<PID>/fd/\`. With \`O_APPEND\` the kernel moves to end-of-file atomically on every write, so several processes appending to one log do not overwrite each other; with \`>\` each writer keeps its own offset. Because the truncation happens before the command runs, \`sort file > file\` empties file before sort ever reads it.`,
+      useCases: [
+        'Capturing a cron job\'s output and errors into one log: job.sh >> /var/log/job.log 2>&1',
+        'Separating results from errors when auditing: find / -perm -4000 > suid.txt 2> errors.txt',
+        'Writing a small config or banner file non-interactively with a quoted here-document',
+        'Silencing expected noise in scripts while still checking the exit code'
+      ],
+      syntax: 'cmd > file      cmd >> file\ncmd 2> file     cmd 2>> file\ncmd > file 2>&1   (same as: cmd &> file)\ncmd < file\ncmd <<\'EOF\' ... EOF\ncmd <<< "string"\ncmd 2>/dev/null\nset -o noclobber   cmd >| file',
+      options: [
+        ['>', 'Redirect stdout, truncating the file first'],
+        ['>>', 'Redirect stdout, appending'],
+        ['2>', 'Redirect stderr (FD 2)'],
+        ['2>&1', 'Duplicate FD 2 onto wherever FD 1 currently points'],
+        ['&> / &>>', 'Bash shorthand: stdout and stderr to the same file (truncate / append)'],
+        ['<', 'Read stdin from a file'],
+        ['<<\'EOF\'', 'Here-document with quoted delimiter: no expansion inside'],
+        ['set -o noclobber', 'Refuse to overwrite existing files with >; override with >|']
+      ],
+      examples: [
+        {
+          title: 'Separate results from errors',
+          cmd: 'find /etc -name "*.repo" > repos.txt 2> errors.txt; wc -l repos.txt errors.txt',
+          out: ' 3 repos.txt\n 2 errors.txt\n 5 total',
+          fields: [
+            ['3 repos.txt', 'stdout (matching paths) went to repos.txt'],
+            ['2 errors.txt', 'stderr ("Permission denied" lines for unreadable directories) went to errors.txt']
+          ],
+          note: 'Run as a normal user; as root there would be no permission errors.'
+        },
+        {
+          title: 'Why the order of 2>&1 matters',
+          cmd: 'ls /etc/hosts /nope 2>&1 > out.txt; echo ---; cat out.txt',
+          out: 'ls: cannot access \'/nope\': No such file or directory\n---\n/etc/hosts',
+          fields: [
+            ['ls: cannot access ...', 'stderr was duplicated to the terminal before stdout moved, so the error still appeared on screen'],
+            ['/etc/hosts', 'Only stdout reached out.txt']
+          ],
+          note: 'Write `> out.txt 2>&1` (or `&> out.txt`) to capture both.'
+        },
+        {
+          title: 'Count lines without the file name',
+          cmd: 'wc -l /etc/passwd; wc -l < /etc/passwd',
+          out: '27 /etc/passwd\n27',
+          fields: [['27', 'With < the shell opened the file; wc read stdin and had no name to print']]
+        }
+      ],
+      walkthrough: [
+        'Run `ls /etc/hosts /nope`; both lines appear on screen. Now run `ls /etc/hosts /nope > out.txt` and notice only the error remains visible.',
+        'Run `ls /etc/hosts /nope > out.txt 2> err.txt` and inspect both files with `cat`.',
+        'Run `ls /etc/hosts /nope > all.txt 2>&1` and `cat all.txt`: both lines are captured.',
+        'Run `date >> log.txt` three times, then `cat log.txt` to see appending. Run `date > log.txt` once and see the history disappear.',
+        'Run `set -o noclobber; date > log.txt` (refused: "cannot overwrite existing file"), then `date >| log.txt`, then `set +o noclobber`.',
+        'Write a file with a here-document: `cat > note.txt <<\'EOF\'` then type `Home is $HOME`, then `EOF`; `cat note.txt` shows the literal `$HOME`.'
+      ],
+      lab: {
+        goal: 'Control all three streams of real commands on a RHEL VM and capture logs the way cron jobs and scripts need them.',
+        steps: [
+          'As a normal user run `find /var -name "*.log" > ~/logs.txt 2> ~/find-errors.txt` and count each with `wc -l`.',
+          'Repeat with `&> ~/both.txt` and confirm the file contains both kinds of lines with `grep -c "Permission denied" ~/both.txt`.',
+          'Create a script `~/job.sh` containing `echo start; ls /nonexistent; echo end`, make it executable and run `~/job.sh >> ~/job.log 2>&1` twice. Inspect the log.',
+          'Use a here-document to create `~/banner.txt` with two lines, then display it with `cat`.',
+          'Run `tr a-z A-Z <<< "redirection works"`.',
+          'Start `sleep 300 > ~/sleep.out 2>&1 &` and run `ls -l /proc/$!/fd` to see FDs 1 and 2 pointing at the same file. Then `kill %1`.'
+        ],
+        verify: '`grep -c start ~/job.log` prints 2 and the log also contains the two "cannot access" errors; `ls -l /proc/<PID>/fd` showed 1 and 2 -> /home/<you>/sleep.out.'
+      },
+      troubleshooting: {
+        scenario: 'A nightly backup cron job sometimes fails, but its log file /var/log/backup.log only ever shows the "Backup started" line and no error message. The crontab entry is `0 2 * * * /usr/local/bin/backup.sh 2>&1 > /var/log/backup.log`.',
+        steps: [
+          'Evidence: the log contains stdout lines only; root\'s local mail (`mail` or /var/spool/mail/root) contains the error text cron captured.',
+          'Hypothesis: `2>&1` was written before `>`, so stderr was duplicated to cron\'s original output (mailed or discarded), not the log file. Also `>` truncates the log every night, losing history.',
+          'Fix: change the entry to `/usr/local/bin/backup.sh >> /var/log/backup.log 2>&1`.',
+          'Validate: run the same command line manually with a forced error and confirm both the message and earlier runs are in the log.'
+        ]
+      },
+      mistakes: [
+        'Writing `2>&1 > file` and expecting both streams in the file.',
+        'Using `>` instead of `>>` on a log and wiping its history (or a config file) in one keystroke.',
+        'Running `sort data > data` or `sed ... file > file`: the shell truncates the input before the command reads it.',
+        'Sending everything to /dev/null in scripts and then having no evidence when the job fails.',
+        'Expecting `sudo echo x > /etc/file` to work: the redirection is done by your unprivileged shell, not by sudo (use `echo x | sudo tee /etc/file`).'
+      ],
+      safety: [
+        '`>` destroys the previous content instantly and there is no undo; back up important files first or enable noclobber in interactive shells.',
+        'Redirecting into system files requires root and must be done by a root process (sudo tee), not by prefixing sudo to the command.',
+        'Only discard stderr when you have confirmed the errors are expected; keep the exit code check.'
+      ],
+      distro: 'Redirection syntax is defined by the shell, so it is identical in Bash on RHEL and Debian/Ubuntu. `&>` and `<<<` are Bash extensions: Debian/Ubuntu run `/bin/sh` scripts with dash, where you must write `> file 2>&1` and avoid here-strings. On RHEL `/bin/sh` is Bash, but portable scripts should still use the POSIX forms.',
+      challenge: {
+        task: 'Run `df -h /` and `ls /missing` in one command line so that: normal output is appended to `~/report.log`, error messages go to `~/report.err` (overwriting it), and nothing at all appears on the terminal.',
+        solution: `Use a command group so one set of redirections applies to both commands:
+
+\`\`\`
+{ df -h /; ls /missing; } >> ~/report.log 2> ~/report.err
+\`\`\`
+
+The braces run both commands in the current shell (note the spaces and the final \`;\`). \`>>\` appends stdout to report.log and \`2>\` truncates and writes stderr to report.err. Nothing reaches the terminal because both FD 1 and FD 2 have been redirected. Verify with \`tail -n 3 ~/report.log\` and \`cat ~/report.err\`.`
+      },
+      interview: [
+        {
+          q: 'What is the difference between `cmd > f 2>&1` and `cmd 2>&1 > f`?',
+          a: 'Redirections are applied left to right. In the first, stdout is pointed at f and then stderr is made a copy of stdout, so both go to f. In the second, stderr is copied from stdout while stdout still points at the terminal, then only stdout is moved to f, so errors still go to the terminal.',
+          mistake: 'Saying they are equivalent.',
+          followUp: 'What is the Bash shorthand for sending both streams to a file?'
+        },
+        {
+          q: 'Why does `sudo echo "nameserver 10.0.0.2" > /etc/resolv.conf` fail with Permission denied?',
+          a: 'The redirection is performed by the calling, unprivileged shell before sudo runs, so the file is opened without root privileges. Use `echo ... | sudo tee /etc/resolv.conf` (or `sudo sh -c "..."`) so a root process opens the file.',
+          mistake: 'Saying sudo is misconfigured.',
+          followUp: 'How would you append instead of overwrite with tee?'
+        },
+        {
+          q: 'What happens when you read from or write to /dev/null?',
+          a: 'Writes succeed and the data is discarded; reads immediately return end-of-file. It is a character device (major 1, minor 3).',
+          mistake: 'Thinking it is a regular file that grows.',
+          followUp: 'Why might a broken /dev/null (replaced by a regular file) cause disk usage problems?'
+        }
+      ],
+      revision: [
+        'FD 0 stdin, FD 1 stdout, FD 2 stderr.',
+        '`>` truncates, `>>` appends, `2>` is stderr, `&>` is both (Bash).',
+        '`> file 2>&1` captures both; `2>&1 > file` does not - order matters.',
+        '`< file` feeds stdin; here-docs `<<EOF` and here-strings `<<<` feed inline text.',
+        '`/dev/null` discards; `set -o noclobber` protects against accidental `>`.'
+      ]
+    },
+    {
+      id: 'L02-M4-T2',
+      title: 'Pipes, tee, xargs, exit codes and command chaining (|, $?, &&, ||, ;)',
+      minutes: 45,
+      objectives: [
+        'Connect commands with | and explain what flows through a pipe',
+        'Save and display a stream at the same time with tee and write root-owned files with sudo tee',
+        'Turn input lines into arguments with xargs, safely handling spaces with -0',
+        'Read exit codes with $? and PIPESTATUS, and chain commands with &&, || and ;'
+      ],
+      prereqs: ['L02-M4-T1', 'L02-M3-T2'],
+      concept: `A **pipe** (\`|\`) connects the **stdout** of one command to the **stdin** of the next: \`ps aux | grep sshd\`. Both programs run at the same time; data streams through a small kernel buffer, so pipelines handle gigabytes without temporary files. Only stdout travels through the pipe; stderr still goes to the terminal unless you add \`2>&1\` before the \`|\` (or use Bash's \`|&\`).
+
+**tee** copies its stdin to stdout *and* to one or more files - a T-junction in the pipe. \`dnf update -y | tee update.log\` lets you watch progress and keep a record; \`tee -a\` appends. Because tee opens the file itself, **\`echo text | sudo tee /etc/file\`** is the correct way to write a root-owned file from an unprivileged shell (add \`> /dev/null\` if you do not want the echo on screen).
+
+**xargs** solves a different problem: many commands do not read names from stdin, they want **arguments** (\`rm\`, \`chmod\`, \`ls -l\`). xargs reads items from stdin and appends them to a command line, running it as few times as possible. \`find /tmp -name '*.tmp' | xargs rm\` works until a name contains a space or newline; the robust form is **\`find ... -print0 | xargs -0 rm\`**, which separates names with NUL bytes. \`-n 1\` passes one item per run, \`-I {}\` places the item anywhere in the command, \`-r\` (\`--no-run-if-empty\`) avoids running the command with no arguments, and \`-P 4\` runs four in parallel.
+
+Every command finishes with an **exit status** (0-255). **0 means success; anything else means some kind of failure** whose meaning is command-specific (grep: 1 = no match, 2 = error). The shell stores the last status in **\`$?\`** - read it immediately, because the next command overwrites it. Conventions: 126 = found but not executable, 127 = command not found, 128+N = killed by signal N (130 = Ctrl+C/SIGINT, 137 = SIGKILL). For a pipeline, \`$?\` is the status of the **last** command; Bash keeps all of them in the array \`PIPESTATUS\`, and \`set -o pipefail\` makes the pipeline fail if any member fails.
+
+**Chaining** operators use exit codes:
+
+- **\`a ; b\`** - run a, then b, regardless of the result
+- **\`a && b\`** - run b only if a **succeeded** (exit 0)
+- **\`a || b\`** - run b only if a **failed**
+
+\`sshd -t && systemctl reload sshd\` reloads only if the config test passes. \`mkdir /data || exit 1\` stops a script early. Beware \`a && b || c\`: c runs if a fails **or if b fails**, so it is not a true if/else.`,
+      internals: `For \`a | b\` the shell calls \`pipe()\`, which returns two connected descriptors, then forks a child for each command: in the first it \`dup2()\`s the write end onto FD 1, in the second the read end onto FD 0, closes the unused ends and \`execve()\`s. The kernel buffers up to 64 KiB by default (\`/proc/sys/fs/pipe-max-size\` limits resizing); a writer blocks when the buffer is full and a reader blocks when it is empty, giving natural flow control. When the reader exits (for example \`head\`), the next write gets **SIGPIPE** and the writer terminates quietly - status 141 (128+13) in PIPESTATUS. Each pipeline member runs in its own subshell in Bash, so \`echo x | read v\` does not set v in your shell. Exit statuses come from the child's \`exit()\` value, collected by the shell's \`waitpid()\`; a signal death is encoded and reported as 128+signal. xargs computes how many arguments fit under the system's argument-length limit and splits the work into multiple \`execve()\` calls accordingly.`,
+      useCases: [
+        'Validating a configuration before applying it: nginx -t && systemctl reload nginx',
+        'Recording an upgrade session while watching it: dnf -y upgrade 2>&1 | tee /root/upgrade-$(date +%F).log',
+        'Bulk-changing permissions on files found by find with -print0 | xargs -0 chmod 640',
+        'Making scripts fail fast and report which pipeline stage broke using pipefail and PIPESTATUS'
+      ],
+      syntax: 'cmd1 | cmd2 | cmd3\ncmd1 2>&1 | cmd2      (Bash: cmd1 |& cmd2)\ncmd | tee [-a] FILE...\ncmd | sudo tee FILE > /dev/null\nfind ... -print0 | xargs -0 [-r] [-n N] [-I {}] [-P N] CMD\necho $?   echo "${PIPESTATUS[@]}"\nset -o pipefail\ncmd1 ; cmd2   cmd1 && cmd2   cmd1 || cmd2',
+      options: [
+        ['|', 'Pipe stdout of the left command into stdin of the right'],
+        ['tee -a', 'Append to the file instead of truncating it'],
+        ['xargs -0', 'Input items are NUL-separated (pair with find -print0)'],
+        ['xargs -I {}', 'Replace {} in the command with each input item (one run per item)'],
+        ['xargs -r', 'Do not run the command if input is empty (GNU)'],
+        ['$? / PIPESTATUS', 'Exit status of the last command / of every pipeline member'],
+        ['set -o pipefail', 'Pipeline returns the last non-zero status of any member'],
+        ['&& / || / ;', 'Run next on success / on failure / always']
+      ],
+      examples: [
+        {
+          title: 'Exit codes of success, no match and missing command',
+          cmd: 'grep -q root /etc/passwd; echo $?; grep -q zzz /etc/passwd; echo $?; nosuchcmd; echo $?',
+          out: '0\n1\nbash: nosuchcmd: command not found...\n127',
+          fields: [
+            ['0', 'grep found a match'],
+            ['1', 'grep ran correctly but found nothing'],
+            ['127', 'The shell could not find the command']
+          ],
+          note: 'On RHEL the "command not found..." message may be followed by a PackageKit suggestion if that handler is installed.'
+        },
+        {
+          title: 'PIPESTATUS shows a hidden failure',
+          cmd: 'cat /nope | sort | head -n 1; echo "last=$? all=${PIPESTATUS[*]}"',
+          out: 'cat: /nope: No such file or directory\nlast=0 all=1 0 0',
+          fields: [
+            ['last=0', '$? reports only the final command (head), which succeeded'],
+            ['all=1 0 0', 'cat failed (1); sort and head succeeded']
+          ],
+          note: 'Expand PIPESTATUS before running anything else: here it is in the same echo, before $? is reset. With set -o pipefail, $? would be 1.'
+        },
+        {
+          title: 'Safe bulk action with find and xargs',
+          cmd: 'find /srv/data -type f -name "*.csv" -print0 | xargs -0 -r ls -l | head -n 2',
+          out: '-rw-r--r--. 1 app app 2048 Oct  8 22:10 /srv/data/q3 report.csv\n-rw-r--r--. 1 app app 1024 Oct  8 22:11 /srv/data/sales.csv',
+          fields: [['q3 report.csv', 'A name with a space survived intact because items are NUL-separated']]
+        }
+      ],
+      walkthrough: [
+        'Run `ls /etc | wc -l` and `ls /etc | head -n 3`. Each pipeline has two processes running at once.',
+        'Run `ls /etc/hosts /nope | wc -l` (prints 1, the error still shows) and then `ls /etc/hosts /nope 2>&1 | wc -l` (prints 2).',
+        'Run `true; echo $?` and `false; echo $?`, then `ls /nope; echo $?` (2 for GNU ls "serious trouble").',
+        'Run `mkdir /tmp/demo && echo created` twice; the second time mkdir fails and echo does not run. Then `mkdir /tmp/demo || echo "already there"`.',
+        'Run `echo "hello" | sudo tee /root/t.txt` and `sudo cat /root/t.txt`, then compare with `sudo echo hi > /root/t2.txt` (Permission denied).',
+        'Create files with spaces: `mkdir -p /tmp/x && touch "/tmp/x/a b" /tmp/x/c` and compare `find /tmp/x -type f | xargs ls` (errors) with `find /tmp/x -type f -print0 | xargs -0 ls`.'
+      ],
+      lab: {
+        goal: 'Build reliable pipelines and command chains as used in operations runbooks on a RHEL VM.',
+        steps: [
+          'Report the top 5 memory-using processes: `ps -eo pid,comm,%mem --sort=-%mem | head -n 6`.',
+          'Validate and reload SSH safely: `sudo sshd -t && sudo systemctl reload sshd && echo "reloaded" || echo "NOT reloaded"` and explain each step.',
+          'Append a line to a root-owned file: `echo "# lab $(date +%F)" | sudo tee -a /etc/motd > /dev/null`, then `tail -n1 /etc/motd`.',
+          'Count words in all .conf files under /etc/security: `find /etc/security -name "*.conf" -print0 | xargs -0 wc -w | tail -n1`.',
+          'Run `set -o pipefail; grep sshd /nope | sort; echo $?` and compare with the result after `set +o pipefail`.',
+          'Run `seq 1 5 | xargs -I {} echo "item {}"` and `seq 1 6 | xargs -n 2 echo`.'
+        ],
+        verify: 'The chain prints "reloaded" when sshd -t passes; `tail -n1 /etc/motd` shows your lab line; with pipefail the status is 2, without it 0.'
+      },
+      troubleshooting: {
+        scenario: 'A deployment script runs `curl -s https://repo.example.com/app.tar.gz | tar xz -C /opt/app && echo "Deployed"`. The repository was down, nothing was extracted, but the pipeline log says "Deployed" in some runs and the script never stops on download errors.',
+        steps: [
+          'Evidence: run the pipeline manually and print `${PIPESTATUS[@]}`; curl returns a non-zero code (for example 7, "failed to connect") while tar\'s status determines $?.',
+          'Hypothesis: without pipefail, the pipeline status is tar\'s; curl\'s failure is invisible, and -s even hides its message. In some runs tar also received an HTML error page.',
+          'Fix: add `set -euo pipefail` to the script, use `curl -fsS` so HTTP errors give a non-zero status and a short message, and download to a file, verify a checksum, then extract.',
+          'Validate: point the URL at a non-existent path; the script must now exit non-zero and never print "Deployed".'
+        ]
+      },
+      mistakes: [
+        'Checking `$?` after another command (even an echo) has already overwritten it.',
+        'Assuming a pipeline\'s status reflects every stage; without pipefail only the last command counts.',
+        'Using `a && b || c` as an if/else: c also runs when b fails.',
+        'Feeding find output to xargs without -print0/-0, breaking on spaces, quotes or newlines in names.',
+        'Piping to grep and grepping the grep itself (`ps aux | grep nginx` lists the grep process); use `pgrep -a nginx`.'
+      ],
+      safety: [
+        'xargs with rm or chmod acts on every input line: preview by replacing the command with `echo` first, and use -r so empty input does nothing.',
+        'Gate risky actions on validation: `visudo -c`, `sshd -t`, `nginx -t`, `named-checkconf` before reload with &&.',
+        'When writing system files via `sudo tee`, remember tee truncates without -a: back up the file first.'
+      ],
+      distro: 'Pipes, exit codes and &&/|| are POSIX and identical on RHEL and Debian. PIPESTATUS, `|&` and (before POSIX 2024) `set -o pipefail` are Bash features; dash on Debian/Ubuntu (/bin/sh) lacks PIPESTATUS, and older dash releases lack pipefail. GNU xargs (findutils) provides -0, -r and -P on both families.',
+      challenge: {
+        task: 'Write one command line that finds all regular files under /var/log larger than 50 MB, prints them with human-readable sizes sorted largest first, saves that list to `~/biglogs.txt` while also showing it on screen, and prints "nothing large" only if no file matched.',
+        solution: `\`\`\`
+sudo find /var/log -xdev -type f -size +50M -print0 | sudo xargs -0 -r du -h | sort -rh | tee ~/biglogs.txt; [ -s ~/biglogs.txt ] || echo "nothing large"
+\`\`\`
+
+Reasoning: \`find -print0 | xargs -0 -r du -h\` safely sizes each match (NUL separation survives odd names) and \`-r\` runs nothing when there are no matches. \`sort -rh\` orders human-readable sizes. \`tee\` writes the file *and* passes the data on to the terminal. After the pipeline, \`;\` always runs the test: \`[ -s file ]\` is true when the file is non-empty, so \`|| echo\` fires only when nothing matched. Testing the file is more reliable than testing the pipeline's \`$?\`, which would only reflect \`tee\`.`
+      },
+      interview: [
+        {
+          q: 'What does exit status 127 mean, and what about 137?',
+          a: '127 means the shell could not find the command (not in PATH or misspelled). 137 is 128 + 9: the process was killed by SIGKILL, for example by the OOM killer or kill -9.',
+          mistake: 'Treating every non-zero code as the same generic error.',
+          followUp: 'What does 126 indicate?'
+        },
+        {
+          q: 'Why is `find ... | xargs rm` dangerous and how do you fix it?',
+          a: 'xargs splits input on whitespace and treats quotes specially, so a file named "a b" becomes two arguments and could delete the wrong files. Use find -print0 | xargs -0, or simply find ... -delete / -exec rm {} +. Add -r to avoid running with no arguments.',
+          mistake: 'Saying xargs is just slower than -exec.',
+          followUp: 'When is xargs -P useful?'
+        },
+        {
+          q: 'A pipeline `cmd1 | cmd2` returned 0 but cmd1 failed. How is that possible and how do you detect it?',
+          a: 'A pipeline returns the status of its last command by default. Check ${PIPESTATUS[@]} immediately after it, or enable set -o pipefail so any failing stage makes the pipeline non-zero.',
+          mistake: 'Blaming $? as unreliable.',
+          followUp: 'Why might pipefail report 141 for `yes | head -1`?'
+        },
+        {
+          q: 'Explain `sshd -t && systemctl reload sshd`.',
+          a: 'sshd -t parses the configuration and exits 0 only if it is valid. && makes the reload conditional on that success, so a broken config never gets loaded and you keep a working SSH daemon.',
+          mistake: 'Using ; so the reload happens even if validation fails.',
+          followUp: 'Why is reload preferable to restart for sshd?'
+        }
+      ],
+      revision: [
+        '`|` sends stdout only; add `2>&1` (or `|&`) to include stderr.',
+        '`tee` = save and pass through; `sudo tee` writes root-owned files.',
+        '`xargs` turns lines into arguments; use `-print0 | xargs -0 -r`.',
+        '`$?`: 0 success, 1-255 failure; 127 not found, 126 not executable, 128+N signal.',
+        '`;` always, `&&` on success, `||` on failure; `set -o pipefail` and PIPESTATUS for pipelines.'
+      ]
+    }
+  ]
+};
+
+const M5 = {
+  id: 'L02-M5',
+  title: 'The shell environment',
+  summary: 'Variables, quoting and command substitution, plus the tools that shape your interactive environment: aliases, history, command lookup with which/type/whereis, and formatted output with echo, printf and date.',
+  lessons: [
+    {
+      id: 'L02-M5-T1',
+      title: 'Variables, quoting, escaping and command substitution',
+      minutes: 45,
+      objectives: [
+        'Create, read, export and unset shell variables and explain shell versus environment variables',
+        'Predict the effect of single quotes, double quotes and backslash escaping on expansion',
+        'Capture command output with $(...) and use it in other commands',
+        'Persist variables correctly in ~/.bashrc, ~/.bash_profile or /etc/profile.d'
+      ],
+      prereqs: ['L02-M1-T2'],
+      concept: `A **shell variable** is a named string stored inside the running shell: \`APP=web01\` (no spaces around \`=\`). You read it with **\`$APP\`** or **\`\${APP}\`**; the braces are needed when text follows directly, as in \`\${APP}_backup\`. \`unset APP\` removes it. Names are case sensitive; by convention UPPERCASE is used for environment variables and lowercase for your own script variables, which avoids clobbering important names such as \`PATH\`.
+
+A plain variable exists only in the current shell. **\`export APP\`** (or \`export APP=web01\`) marks it as an **environment variable**, which is copied into every child process the shell starts. \`env\` or \`printenv\` lists the environment; \`set\` lists all shell variables and functions. A child can never change its parent's variables, which is why \`./setvars.sh\` appears to "do nothing" while **\`source setvars.sh\`** (or \`. setvars.sh\`) runs the file in the current shell. \`VAR=value command\` sets a variable only for that one command, e.g. \`LC_ALL=C sort file\`.
+
+Important variables: \`PATH\` (colon-separated directories searched for commands), \`HOME\`, \`USER\`, \`SHELL\`, \`PWD\`, \`HOSTNAME\`, \`PS1\` (the prompt), \`LANG\`/\`LC_*\` (locale), \`EDITOR\`. Extend PATH by appending: \`export PATH="$PATH:/opt/app/bin"\`. Never overwrite it with a single directory.
+
+**Quoting** controls which expansions happen:
+
+- **Single quotes \`'...'\`** - everything is literal; no variables, no globs, no backslash escapes. \`echo '$HOME'\` prints \`$HOME\`.
+- **Double quotes \`"..."\`** - variables (\`$\`), command substitution and backslash escapes of the dollar sign, backtick, double quote and backslash still work, but **word splitting and globbing do not**. \`echo "$HOME"\` prints the path.
+- **Backslash \`\\\`** - escapes the single next character: \`echo \\$HOME\`, \`touch my\\ file\`.
+
+The golden rule: **quote your variable expansions** (\`"$file"\`). Unquoted, a value containing spaces is split into several arguments and any \`*\` in it is globbed - the source of countless script bugs.
+
+**Command substitution** \`$(command)\` runs a command and replaces itself with its output (trailing newlines removed): \`today=$(date +%F)\`, \`kill $(pgrep -f stuckjob)\`. The legacy form uses backticks; prefer \`$( )\`, which nests cleanly. Arithmetic uses \`$(( ))\`: \`echo $((1024 * 4))\`.
+
+To make variables permanent, put them in a startup file. For Bash on RHEL: **login shells** read \`/etc/profile\` (which sources \`/etc/profile.d/*.sh\`) and then \`~/.bash_profile\`, which normally sources \`~/.bashrc\`; **interactive non-login shells** read \`~/.bashrc\` (which sources \`/etc/bashrc\`). Put per-user settings in \`~/.bashrc\` and system-wide ones in a new file under \`/etc/profile.d/\`.`,
+      internals: `Bash keeps variables in its own memory. When it starts a program it builds an \`envp\` array from the exported variables and passes it to \`execve()\`; the kernel places those \`NAME=value\` strings on the new process's stack. You can read any process's initial environment (NUL-separated) in \`/proc/<PID>/environ\` - changes the process makes later are not reflected there. Expansion happens in a fixed order: brace expansion, tilde, parameter/variable, arithmetic and command substitution (left to right), then **word splitting** on the characters in \`IFS\` (space, tab, newline) for unquoted results, then **pathname expansion** (globbing), and finally **quote removal**. Double quotes suppress the last two steps for the text inside them, which is exactly why \`"$var"\` is safe. \`$(...)\` is implemented by forking a subshell with stdout connected to a pipe; the parent reads the pipe until EOF and strips trailing newlines.`,
+      useCases: [
+        'Adding a vendor tool directory to PATH for all users with a file in /etc/profile.d',
+        'Building timestamped file names in scripts: backup_$(hostname -s)_$(date +%F).tar.gz',
+        'Running one command with a temporary setting such as LC_ALL=C or TZ=UTC',
+        'Safely handling file names with spaces in loops by quoting "$f"'
+      ],
+      syntax: 'NAME=value        (no spaces)\necho "$NAME"  "${NAME}_suffix"\nexport NAME[=value]   unset NAME\nVAR=value command\nenv | printenv NAME | set\nsource FILE   (. FILE)\nvar=$(command)   echo $((2 + 3))\n\'literal\'  "expand $vars"  \\c',
+      options: [
+        ['export', 'Mark a variable for inheritance by child processes'],
+        ['unset', 'Remove a variable'],
+        ['env / printenv', 'Show environment variables (exported only)'],
+        ['set', 'Show all shell variables and functions'],
+        ['source / .', 'Run a file in the current shell so its variables persist'],
+        ['$( )', 'Command substitution'],
+        ['$(( ))', 'Integer arithmetic expansion'],
+        ['${VAR:-default}', 'Use default if VAR is unset or empty']
+      ],
+      examples: [
+        {
+          title: 'Quoting changes what the command receives',
+          cmd: 'name="web 01"; echo \'$name\'; echo "$name"; echo \\$name',
+          out: '$name\nweb 01\n$name',
+          fields: [
+            ['$name (first line)', 'Single quotes: no expansion at all'],
+            ['web 01', 'Double quotes: variable expanded, space preserved as one argument'],
+            ['$name (third line)', 'Backslash escaped the dollar sign']
+          ]
+        },
+        {
+          title: 'Shell variable versus environment variable',
+          cmd: 'COLOR=blue; bash -c \'echo "child sees: [$COLOR]"\'; export COLOR; bash -c \'echo "child sees: [$COLOR]"\'',
+          out: 'child sees: []\nchild sees: [blue]',
+          fields: [
+            ['[]', 'Before export the child bash process did not inherit COLOR'],
+            ['[blue]', 'After export it is part of the environment passed to children']
+          ]
+        },
+        {
+          title: 'Command substitution in a file name',
+          cmd: 'tar czf /tmp/etc_$(hostname -s)_$(date +%F).tgz -C / etc/hosts && ls /tmp/etc_*',
+          out: '/tmp/etc_web01_2026-10-09.tgz',
+          fields: [['web01 / 2026-10-09', 'Output of hostname -s and date +%F inserted into the argument']]
+        }
+      ],
+      walkthrough: [
+        'Run `greeting=hello; echo $greeting; echo ${greeting}world; echo $greetingworld` (the last prints an empty line: no such variable).',
+        'Run `bash` to start a child, `echo $greeting` (empty), then `exit`. Now `export greeting` and repeat: the child sees it.',
+        'Run `echo "PATH has $(echo "$PATH" | tr ":" "\\n" | wc -l) directories"`.',
+        'Create files with spaces: `touch "a b.txt"; f="a b.txt"; ls $f` (two errors) then `ls "$f"` (works).',
+        'Run `echo \'single $HOME\' "double $HOME" escaped\\ \\$HOME`.',
+        'Append `export EDITOR=vim` to `~/.bashrc`, run `source ~/.bashrc` and confirm with `printenv EDITOR`.'
+      ],
+      lab: {
+        goal: 'Manage variables and quoting the way login scripts and automation require on RHEL 9/10.',
+        steps: [
+          'As root create `/etc/profile.d/apptools.sh` containing `export PATH="$PATH:/opt/apptools/bin"` and `export APP_ENV=prod`.',
+          'Open a new login shell (`su - <user>` or a new SSH session) and check `echo "$PATH"` and `printenv APP_ENV`.',
+          'Run `env -i bash --noprofile --norc -c env` to see how small an empty environment is, then compare with `env | wc -l`.',
+          'Write `~/snap.sh` that sets `stamp=$(date +%Y%m%d-%H%M)` and runs `cp -a /etc/hosts "/tmp/hosts.$stamp"`; run it and list /tmp/hosts.*.',
+          'Run `x=5; echo $((x * 3)); echo "${undefined:-fallback}"`.',
+          'Clean up: remove /etc/profile.d/apptools.sh and start a new login shell to confirm APP_ENV is gone.'
+        ],
+        verify: 'In the new login shell `printenv APP_ENV` printed `prod` and PATH ended in `/opt/apptools/bin`; after cleanup `printenv APP_ENV` prints nothing and exits 1.'
+      },
+      troubleshooting: {
+        scenario: 'After a colleague edited `~/.bashrc` on a jump host, every command except builtins fails with "command not found" (ls, vim, sudo). The last line they added was `export PATH=/opt/tools/bin`.',
+        steps: [
+          'Evidence: `echo $PATH` prints only `/opt/tools/bin`; builtins such as `echo` and `cd` still work because they need no PATH lookup.',
+          'Hypothesis: PATH was overwritten instead of extended, so /usr/bin and /usr/sbin are no longer searched.',
+          'Fix: repair the current shell with `export PATH=/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin`, then edit ~/.bashrc with `/usr/bin/vi` to `export PATH="$PATH:/opt/tools/bin"`.',
+          'Validate: open a new shell; `type ls` resolves to /usr/bin/ls and `/opt/tools/bin` is at the end of PATH.'
+        ]
+      },
+      mistakes: [
+        'Putting spaces around `=` (`VAR = x` runs a command called VAR).',
+        'Leaving variables unquoted, so values with spaces or `*` are split and globbed.',
+        'Using single quotes when you wanted expansion (`echo \'$HOME\'`).',
+        'Running a script that sets variables (`./env.sh`) and expecting them in the current shell; use `source`.',
+        'Overwriting PATH instead of appending to it.'
+      ],
+      safety: [
+        'Never put secrets in exported variables on shared systems: they are visible to child processes and stored in shell history if typed inline.',
+        'Edit system-wide profile files only as root, add a new file in /etc/profile.d rather than editing /etc/profile, and test in a new session before closing your current one.',
+        'Use `${VAR:?message}` in destructive commands so an empty variable aborts instead of expanding to nothing.'
+      ],
+      distro: 'RHEL uses ~/.bash_profile (sourcing ~/.bashrc) and /etc/bashrc; Debian/Ubuntu use ~/.profile (sourcing ~/.bashrc) and /etc/bash.bashrc. Both read /etc/profile and /etc/profile.d/*.sh for login shells. Debian\'s /bin/sh (dash) supports $( ), $(( )) and quoting rules but not Bash arrays or ${PIPESTATUS}.',
+      challenge: {
+        task: 'A script contains `for f in $(ls /data/in); do mv $f /data/done/; done` and fails on files such as "Q3 report.csv". Rewrite it correctly and explain both bugs.',
+        solution: `\`\`\`
+for f in /data/in/*; do
+  [ -e "$f" ] || continue
+  mv -- "$f" /data/done/
+done
+\`\`\`
+
+Bug 1: \`$(ls ...)\` produces text that is then **word-split** on spaces, so "Q3 report.csv" becomes two items. Using a glob produces one word per file name, with spaces intact. Bug 2: \`$f\` was unquoted, so even a correct name would be split again (and globbed). The original also used bare names relative to the CWD rather than paths under /data/in. \`"$f"\` passes exactly one argument; \`--\` protects names starting with \`-\`; the \`[ -e ]\` test skips the literal pattern when the directory is empty.`
+      },
+      interview: [
+        {
+          q: 'What is the difference between a shell variable and an environment variable?',
+          a: 'A shell variable exists only inside the current shell. An environment variable has been exported, so the shell copies it into the environment of every child process it starts. Children cannot modify the parent\'s environment.',
+          mistake: 'Saying environment variables are global to the whole system.',
+          followUp: 'How do you inspect the environment of a running daemon? (/proc/PID/environ)'
+        },
+        {
+          q: 'Explain the difference between single and double quotes in Bash.',
+          a: 'Single quotes make everything literal. Double quotes still allow variable, command and arithmetic expansion and a few backslash escapes, but prevent word splitting and globbing of the result.',
+          mistake: 'Saying they are interchangeable.',
+          followUp: 'How do you print a single quote inside single quotes?'
+        },
+        {
+          q: 'Why does running ./setenv.sh not change your current environment while source setenv.sh does?',
+          a: 'Running it starts a child process; its variable changes die with it. source executes the commands in the current shell process.',
+          mistake: 'Suggesting chmod +x fixes it.',
+          followUp: 'Which files does a login shell read on RHEL?'
+        }
+      ],
+      revision: [
+        '`VAR=value` (no spaces); read with `"$VAR"` or `"${VAR}"`.',
+        '`export` passes variables to children; `source` runs a file in the current shell.',
+        '`\'...\'` literal; `"..."` expands `$` but stops splitting/globbing; `\\` escapes one char.',
+        '`$(cmd)` command substitution, `$((expr))` arithmetic.',
+        'Persist per-user in ~/.bashrc, system-wide in /etc/profile.d/*.sh; extend PATH, never replace it.'
+      ]
+    },
+    {
+      id: 'L02-M5-T2',
+      title: 'Aliases, history, command lookup and formatted output (alias, history, which, type, whereis, echo, printf, date)',
+      minutes: 35,
+      objectives: [
+        'Create, list, persist and bypass aliases',
+        'Search and re-run commands with history, !n, !! and Ctrl+R, and tune HISTSIZE/HISTCONTROL',
+        'Determine what a command name really resolves to with type, which and whereis',
+        'Produce precise output with echo, printf and date format strings'
+      ],
+      prereqs: ['L02-M5-T1'],
+      concept: `Several features make the interactive shell faster and more predictable.
+
+**Aliases** are text shortcuts expanded by the shell when a command name matches: \`alias ll='ls -l --color=auto'\`. \`alias\` alone lists them; \`unalias ll\` removes one. Aliases defined at the prompt vanish when the shell exits; put them in \`~/.bashrc\` to keep them. RHEL already defines some (for root: \`rm -i\`, \`cp -i\`, \`mv -i\`; for everyone \`ll\`, \`grep --color=auto\`). To bypass an alias for one run, use **\`\\rm\`**, \`command rm\` or the full path \`/usr/bin/rm\`. Aliases are not expanded in non-interactive scripts by default, so never rely on them there.
+
+**History**: Bash records commands in memory and writes them to \`~/.bash_history\` when the shell exits. \`history\` lists them with numbers; \`history 20\` shows the last 20. Re-run with **\`!!\`** (last command, as in \`sudo !!\`), **\`!n\`** (command number n), **\`!string\`** (most recent command starting with string) and **\`!$\`** (last argument of the previous command). **Ctrl+R** searches backwards interactively - the fastest way to find a long command. Variables tune it: \`HISTSIZE\` (lines kept in memory), \`HISTFILESIZE\` (lines kept in the file), \`HISTCONTROL=ignoreboth\` (skip duplicates and commands starting with a space) and \`HISTTIMEFORMAT='%F %T '\` (show timestamps).
+
+**Which program runs?** When you type a name, Bash checks, in order: aliases, keywords, functions, builtins, then the directories in \`PATH\` (remembering found paths in a hash table). **\`type -a name\`** is the authoritative answer because it is a builtin that knows all of these: \`type ls\` may say "ls is aliased to ls --color=auto". **\`which\`** only searches PATH (on RHEL it is wrapped by an alias that also shows aliases), and **\`whereis\`** reports the binary, source and man page locations from standard directories. Use \`hash -r\` if a command moved and Bash keeps running the old path.
+
+**Output tools**: \`echo\` prints its arguments followed by a newline; \`echo -n\` omits the newline and \`echo -e\` interprets escapes like \`\\t\`, but these options differ between shells. **\`printf\`** is portable and precise: \`printf '%-10s %5d\\n' "$user" "$count"\` formats columns; it does not add a newline unless you write \`\\n\`, and it reuses the format for extra arguments. **\`date\`** prints or formats time: \`date +%F\` (2026-10-09), \`date '+%F %T'\`, \`date +%s\` (seconds since the epoch), \`date -d '2 days ago' +%F\`, \`date -u\` (UTC), \`date -d @1760000000\` (convert epoch). Setting the clock is a root operation done with \`timedatectl\` on systemd systems, not with \`date -s\` in production.`,
+      internals: `Aliases are expanded during parsing, before any other expansion, and only for the first word of a simple command (or the word after an alias ending in a space). They are controlled by \`shopt expand_aliases\`, on for interactive shells and off for scripts. History is implemented by the GNU Readline and history libraries inside Bash; the in-memory list is appended to \`$HISTFILE\` on exit (\`shopt -s histappend\` appends instead of overwriting, \`history -a\` writes immediately). History expansion (\`!\`) happens before the line is parsed, which is why \`!\` inside double quotes can surprise you; single quotes stop it. Command lookup for a name without a slash consults the alias table, function table and builtin table, then the hash table, then walks \`PATH\` calling \`stat()\` on each candidate until it finds an executable file; \`type\` reports exactly that decision. \`date\` calls \`clock_gettime()\` and formats with \`strftime()\`, applying the \`TZ\` variable or /etc/localtime.`,
+      useCases: [
+        'Reproducing exactly what was run during an incident by reviewing history with timestamps',
+        'Discovering that a "broken" command is actually an alias or function shadowing the real binary',
+        'Generating aligned reports in scripts with printf',
+        'Creating sortable, timestamped log and backup names with date +%F_%H%M'
+      ],
+      syntax: 'alias NAME=\'command\'   alias   unalias NAME   \\NAME\nhistory [N]   history -c   !!   !n   !string   !$   Ctrl+R\ntype [-a] NAME   which NAME   whereis NAME   hash -r\necho [-n] [-e] TEXT\nprintf FORMAT [ARG...]\ndate [+FORMAT] [-d STRING] [-u]',
+      options: [
+        ['type -a', 'Show every alias, function, builtin and PATH match for a name'],
+        ['\\cmd / command cmd', 'Bypass an alias (command also bypasses functions)'],
+        ['!! / !n / !$', 'Previous command / command number n / last argument of previous command'],
+        ['HISTTIMEFORMAT', 'Add timestamps to history output, e.g. \'%F %T \''],
+        ['HISTCONTROL=ignoreboth', 'Skip duplicates and lines starting with a space'],
+        ['printf %-10s %5d', 'Left-aligned string in 10 columns, right-aligned integer in 5'],
+        ['date +%F / %T / %s', 'YYYY-MM-DD / HH:MM:SS / epoch seconds'],
+        ['date -d', 'Display a time described by a string (e.g. "yesterday", @EPOCH)']
+      ],
+      examples: [
+        {
+          title: 'What does "ls" really run?',
+          cmd: 'type -a ls; whereis ls',
+          out: 'ls is aliased to `ls --color=auto\'\nls is /usr/bin/ls\nls: /usr/bin/ls /usr/share/man/man1/ls.1.gz /usr/share/man/man1p/ls.1p.gz',
+          fields: [
+            ['aliased to', 'An alias is checked first and wins'],
+            ['ls is /usr/bin/ls', 'The executable found via PATH'],
+            ['whereis ...', 'Binary plus man page locations (section 1 and POSIX 1p)']
+          ]
+        },
+        {
+          title: 'History with timestamps',
+          cmd: 'HISTTIMEFORMAT="%F %T " history 3',
+          out: ' 1012  2026-10-09 09:14:02 sudo systemctl restart httpd\n 1013  2026-10-09 09:14:20 sudo journalctl -u httpd -n 20\n 1014  2026-10-09 09:15:01 HISTTIMEFORMAT="%F %T " history 3',
+          fields: [
+            ['1012', 'History number usable with !1012'],
+            ['2026-10-09 09:14:02', 'When the command was entered (only accurate for commands recorded while timestamps were being saved)']
+          ]
+        },
+        {
+          title: 'Aligned output with printf and dates',
+          cmd: 'printf \'%-12s %8s\\n\' HOST DATE "$(hostname -s)" "$(date +%F)"; date -d \'@1760000000\' -u',
+          out: 'HOST             DATE\nweb01      2026-10-09\nThu Oct  9 08:53:20 UTC 2025',
+          fields: [
+            ['%-12s', 'First argument left-aligned in 12 columns'],
+            ['%8s', 'Second argument right-aligned in 8 columns; the format repeats for the next two arguments'],
+            ['@1760000000', 'An epoch timestamp converted to a readable UTC date']
+          ]
+        }
+      ],
+      walkthrough: [
+        'Run `alias` to list defined aliases, then `alias ll` and `type ll`.',
+        'Create `alias gs=\'git status\'`, use it, then `unalias gs`. As root, compare `rm somefile` (prompts) with `\\rm somefile` (no prompt) on a test file.',
+        'Run `history | tail -n 5`, re-run one with `!<number>`, then press Ctrl+R and type part of an earlier command.',
+        'Run `ls /etc/hosts` then `cat !$` to reuse the last argument.',
+        'Run `type cd echo ls`, `which ls` and `whereis passwd`; note that cd and echo are builtins.',
+        'Run `date +%F_%H%M`, `date -d "next monday" +%A\\ %F`, and `printf "%05d|%-6s|\\n" 42 ok`.'
+      ],
+      lab: {
+        goal: 'Customise and audit the interactive shell environment on RHEL 9/10.',
+        steps: [
+          'Add to `~/.bashrc`: `alias ports=\'ss -tulpn\'`, `export HISTTIMEFORMAT="%F %T "`, `export HISTCONTROL=ignoreboth` and `shopt -s histappend`; then `source ~/.bashrc`.',
+          'Run `sudo ports` (note: aliases are not expanded after sudo unless the alias ends with a space, e.g. `alias sudo=\'sudo \'`) and then `ports` as your user.',
+          'Run `history 5` and confirm timestamps are shown.',
+          'Prove a command starting with a space is not recorded: ` echo secret-test` then `history 2`.',
+          'Use `type -a` on `ll`, `cd`, `ls` and `python3` and classify each as alias, builtin or file.',
+          'Write a one-line report: `printf "%-20s %s\\n" "Kernel:" "$(uname -r)" "Uptime since:" "$(uptime -s)" "Report date:" "$(date \'+%F %T %Z\')"`.'
+        ],
+        verify: '`alias ports` prints the definition in a new shell; `history 5` shows dates; the " echo secret-test" line is absent from history; the printf report has aligned values.'
+      },
+      troubleshooting: {
+        scenario: 'An admin runs `python3 --version` and gets 3.9, but `/usr/bin/python3 --version` reports 3.12 after they changed the alternatives link. Another engineer says "which python3 shows /usr/bin/python3, so it must be 3.12".',
+        steps: [
+          'Evidence: `type -a python3` shows "python3 is aliased to ..." or "python3 is hashed (/usr/local/bin/python3)" before /usr/bin/python3.',
+          'Hypothesis: an alias, function or an earlier PATH entry (or a stale hash) shadows the binary; which only shows part of the picture.',
+          'Fix: remove the alias/function from ~/.bashrc or reorder PATH, and run `hash -r` to clear remembered paths.',
+          'Validate: `type -a python3` lists /usr/bin/python3 first and `python3 --version` prints the expected version.'
+        ]
+      },
+      mistakes: [
+        'Using aliases in scripts or cron jobs, where they are not expanded.',
+        'Trusting `which` over `type`; which can miss functions and builtins.',
+        'Typing passwords or tokens on the command line where they end up in ~/.bash_history.',
+        'Using `echo -e` or `echo -n` in portable scripts; behaviour varies between shells, use printf.',
+        'Changing the clock with `date -s` on servers instead of fixing NTP/chrony with timedatectl.'
+      ],
+      safety: [
+        'History files can contain sensitive data; protect them (mode 600) and clear specific entries with `history -d N` rather than sharing them.',
+        '`history -c` only clears memory; the file may still hold entries, and wiping history on shared systems may conflict with audit policy.',
+        'Setting the system time requires root and can break Kerberos, TLS and log correlation; use timedatectl and chrony, not date -s.'
+      ],
+      distro: 'Identical Bash features on RHEL and Debian/Ubuntu. RHEL defines `which` as an alias that pipes aliases and functions into `/usr/bin/which --read-alias --read-functions`, so it shows more than plain which on Debian. Ubuntu\'s default ~/.bashrc sets HISTCONTROL=ignoreboth and histappend; RHEL\'s does not. Both ship GNU date with -d and +FORMAT.',
+      challenge: {
+        task: 'You want every command run by members of the ops team to be stored with timestamps, kept for 10000 lines and never lose history when several sessions are open. Implement it system-wide for interactive Bash shells and explain the limitation of this approach for auditing.',
+        solution: `Create \`/etc/profile.d/history.sh\` (root):
+
+\`\`\`
+export HISTTIMEFORMAT="%F %T "
+export HISTSIZE=10000
+export HISTFILESIZE=10000
+shopt -s histappend
+PROMPT_COMMAND="history -a\${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+\`\`\`
+
+\`histappend\` appends instead of overwriting on exit; \`history -a\` in PROMPT_COMMAND writes each command as soon as it completes, so concurrent sessions do not overwrite each other. Login shells read /etc/profile.d. **Limitation:** shell history is user-controlled - users can unset variables, delete the file or use another shell - so it is a convenience, not an audit trail. For real auditing use auditd (for example execve rules) and centralised logging.`
+      },
+      interview: [
+        {
+          q: 'How do you find out exactly what will run when you type a command name?',
+          a: 'Use type -a NAME. It reports aliases, functions, builtins and every matching file in PATH in the order Bash would use them. which only searches PATH and whereis only lists standard locations.',
+          mistake: 'Answering only "which".',
+          followUp: 'How do you clear Bash\'s remembered command paths? (hash -r)'
+        },
+        {
+          q: 'How do you run a command without its alias?',
+          a: 'Prefix it with a backslash (\\rm), use command rm, or call the full path /usr/bin/rm.',
+          mistake: 'Running unalias globally just to run one command.',
+          followUp: 'Why are aliases not available inside scripts?'
+        },
+        {
+          q: 'Why prefer printf over echo in scripts?',
+          a: 'echo options and escape handling differ between shells and implementations; printf is specified by POSIX, supports field widths and formats, and never adds unexpected newlines.',
+          mistake: 'Saying printf is only for numbers.',
+          followUp: 'How do you print a timestamp in ISO 8601 format? (date +%F or date -Is)'
+        }
+      ],
+      revision: [
+        'Aliases: `alias x=\'...\'`, persist in ~/.bashrc, bypass with `\\x` or `command x`.',
+        'History: `!!`, `!n`, `!$`, Ctrl+R; HISTTIMEFORMAT, HISTCONTROL, histappend.',
+        '`type -a` is authoritative; `which` searches PATH; `whereis` adds man pages.',
+        '`printf` for precise output; `date +%F %T %s`, `date -d`.',
+        'Set time with timedatectl/chrony, not `date -s`.'
+      ]
+    }
+  ]
+};
+
+export default {
+  id: 'L02',
+  number: 2,
+  title: 'Command-Line Mastery',
+  summary: 'Become fluent at the Bash prompt: navigate, manage and inspect files, search and transform text, wire commands together with redirection, pipes and exit codes, and control your shell environment.',
+  prerequisites: ['L01'],
+  outcomes: [
+    'Navigate the filesystem and find documentation offline with man, man -k and --help',
+    'Create, copy, move, delete and inspect files safely while preserving metadata',
+    'Locate files with find and analyse text with grep, regular expressions, sort, uniq, cut and tr',
+    'Control stdin, stdout and stderr with redirection, pipes, tee and xargs, and chain commands on exit codes',
+    'Manage variables, quoting, command substitution, aliases and history to work quickly and predictably'
+  ],
+  modules: [M1, M2, M3, M4, M5]
+};

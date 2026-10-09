@@ -32,6 +32,7 @@ export class Shell {
       this.sys.history.push(text);
       if (this.sys.history.length > 1000) this.sys.history.shift();
     }
+    const outer = this.output;
     this.output = res;
     try {
       const ast = parseScript(text);
@@ -42,6 +43,7 @@ export class Shell {
       else { this.emitErr(`bash: internal simulator error: ${e.message}`); res.code = 1; }
     }
     this.sys.lastExit = res.code;
+    if (outer) this.output = outer; // nested runs (e.g. systemd starting a script) must not clobber the caller
     return res;
   }
 
@@ -171,6 +173,12 @@ export class Shell {
       else { ctx.error(`${argv[0]}: simulator error: ${e.message}`); code = 1; }
     }
     this.restoreVars(saved);
+    if (code && typeof code === 'object') {
+      // Commands can ask the UI to do something interactive (open the editor, clear the screen).
+      if (code.editor) this.output.editor = code;
+      if (code.clear) this.output.clear = true;
+      code = 0;
+    }
     if (stdoutTarget) {
       if (stdoutTarget.path !== '/dev/null') {
         const err = this.writeRedirect(stdoutTarget.path, stdout, true);
@@ -252,7 +260,7 @@ export class Shell {
     const outer = this.output;
     const inner = { lines: [], code: 0 };
     this.output = inner;
-    let code = 0;
+    let code;
     try { code = this.execBlock(parseScript(content), ctx.stdin); }
     catch (e) {
       if (e instanceof ShellExit) code = e.code;
@@ -274,7 +282,7 @@ export class Shell {
     const outer = this.output;
     const inner = { lines: [], code: 0 };
     this.output = inner;
-    let code = 0;
+    let code;
     this.depth++;
     try { code = this.execBlock(this.functions[name], ctx.stdin); }
     catch (e) { if (e instanceof FuncReturn) code = e.code; else throw e; }

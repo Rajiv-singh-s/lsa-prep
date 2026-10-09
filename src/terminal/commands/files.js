@@ -355,7 +355,7 @@ export const fileCommands = [
           else if (d.startsWith('SIMTAR1')) desc = 'POSIX tar archive (GNU)';
           else if (d.startsWith('SIMGZ')) desc = 'gzip compressed data, original size modulo 2^32 ' + d.length;
           else if (/^<\??(html|xml|h1)/i.test(d)) desc = 'HTML document, ASCII text';
-          else desc = /[^\x00-\x7f]/.test(d) ? 'Unicode text, UTF-8 text' : 'ASCII text';
+          else desc = [...d].some(ch => ch.charCodeAt(0) > 127) ? 'Unicode text, UTF-8 text' : 'ASCII text';
         }
         ctx.print(`${p}: ${desc}`);
       }

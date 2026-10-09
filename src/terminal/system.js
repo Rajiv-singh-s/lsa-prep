@@ -184,12 +184,13 @@ export function loadString(sys) {
 
 export function memory(sys) {
   const total = 16048; // MiB
+  const swapTotal = (sys.storage?.swaps || []).reduce((s, d) => s + (sys.storage.filesystems[d]?.size || 0), 0);
   const used = Math.round(2100 + sys.processes.reduce((s, p) => s + (p.rssMb || 0), 0));
   const buff = 3717;
   const shared = 385;
   const free = Math.max(120, total - used - buff);
   const available = Math.max(80, free + Math.round(buff * 0.85));
-  return { total, used, free, shared, buff, available, swapTotal: 4096, swapUsed: used > 12000 ? 900 : 0 };
+  return { total, used, free, shared, buff, available, swapTotal, swapUsed: used > 12000 ? Math.min(900, swapTotal) : 0 };
 }
 
 function meminfoText(sys) {
@@ -221,6 +222,10 @@ function seedFilesystem(sys) {
   for (const [name, type] of [['null', S_IFCHR], ['zero', S_IFCHR], ['urandom', S_IFCHR], ['tty', S_IFCHR], ['sda', S_IFBLK], ['sda1', S_IFBLK], ['sda2', S_IFBLK], ['sdb', S_IFBLK], ['sdc', S_IFBLK]]) {
     mk(sys, `/dev/${name}`, type, type === S_IFCHR ? 0o666 : 0o660, 0, type === S_IFBLK ? 6 : 0);
   }
+  for (const lv of ['root', 'swap']) {
+    mk(sys, `/dev/mapper/rhel-${lv}`, S_IFBLK, 0o660, 0, 6);
+    mk(sys, `/dev/rhel/${lv}`, S_IFLNK, 0o777, 0, 0, { target: `../mapper/rhel-${lv}` });
+  }
   // /etc
   sys.groups.push({ name: 'disk', gid: 6, members: [] });
   genFile(sys, '/etc/passwd', 'passwd', 0o644);
@@ -245,33 +250,33 @@ function seedFilesystem(sys) {
   writeSeed(sys, '/etc/yum.repos.d/rhel.repo', '[rhel-10-baseos]\nname=RHEL 10 BaseOS (lab mirror)\nbaseurl=http://repo.lab.example.com/rhel10/BaseOS\nenabled=1\ngpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release\n\n[rhel-10-appstream]\nname=RHEL 10 AppStream (lab mirror)\nbaseurl=http://repo.lab.example.com/rhel10/AppStream\nenabled=1\ngpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release\n');
   writeSeed(sys, '/etc/httpd/conf/httpd.conf', '# Simulated httpd.conf (excerpt)\nServerRoot "/etc/httpd"\nListen 80\nUser apache\nGroup apache\nDocumentRoot "/var/www/html"\n<Directory "/var/www/html">\n    Require all granted\n</Directory>\nErrorLog "logs/error_log"\n');
   mk(sys, '/etc/systemd/system', S_IFDIR, 0o755);
-  writeSeed(sys, '/etc/systemd/journald.conf', '[Journal]
+  writeSeed(sys, '/etc/systemd/journald.conf', `[Journal]
 #Storage=auto
 #Compress=yes
 #SystemMaxUse=
 #SystemKeepFree=
 #MaxRetentionSec=
-');
-  writeSeed(sys, '/etc/sysctl.conf', '# System default settings live in /usr/lib/sysctl.d/00-system.conf.
+`);
+  writeSeed(sys, '/etc/sysctl.conf', `# System default settings live in /usr/lib/sysctl.d/00-system.conf.
 # Add overrides in /etc/sysctl.d/*.conf
-');
+`);
   mk(sys, '/etc/sysctl.d', S_IFDIR, 0o755);
-  writeSeed(sys, '/etc/nsswitch.conf', 'passwd:     files
+  writeSeed(sys, '/etc/nsswitch.conf', `passwd:     files
 group:      files
 hosts:      files dns myhostname
-');
+`);
   writeSeed(sys, '/etc/exports', '');
-  writeSeed(sys, '/etc/auto.master', '/misc   /etc/auto.misc
+  writeSeed(sys, '/etc/auto.master', `/misc   /etc/auto.misc
 /net    -hosts
 +dir:/etc/auto.master.d
-');
+`);
   mk(sys, '/etc/auto.master.d', S_IFDIR, 0o755);
   mk(sys, '/etc/cron.d', S_IFDIR, 0o755);
   mk(sys, '/etc/pki/tls/certs', S_IFDIR, 0o755);
-  writeSeed(sys, '/etc/pki/tls/certs/app.crt', '-----BEGIN CERTIFICATE-----
+  writeSeed(sys, '/etc/pki/tls/certs/app.crt', `-----BEGIN CERTIFICATE-----
 MIIDsimulatedCERTIFICATEdataONLYforLEARNING
 -----END CERTIFICATE-----
-');
+`);
   mk(sys, '/etc/systemd/system/multi-user.target.wants', S_IFDIR, 0o755);
   writeSeed(sys, '/etc/motd', 'Simulated RHEL 10 lab host. Nothing here runs on a real kernel.\n');
   writeSeed(sys, '/etc/profile', '# /etc/profile (excerpt)\npathmunge () { :; }\nexport HISTSIZE=1000\n');
@@ -350,6 +355,8 @@ function seedServices(sys) {
   def('app', { description: 'Demo business application', exec: '/opt/app/bin/start.sh', active: 'failed', enabled: 'enabled', ports: [['tcp', 8080]], custom: true, failReason: 'exit-code', rssMb: 120, after: 'network-online.target' });
   for (const [name, svc] of Object.entries(sys.services)) {
     if (svc.package && !sys.packages.installed[svc.package]) continue; // unit ships with the package
+    const execPath = svc.exec.split(/\s+/)[0].replace(/^\/sbin\//, '/usr/sbin/');
+    if (!svc.custom && !sys.fs.exists(execPath)) writeSeed(sys, execPath, `\u007fELF simulated binary: ${execPath.split('/').pop()}`, 0o755);
     const dir = svc.custom ? '/etc/systemd/system' : '/usr/lib/systemd/system';
     writeSeed(sys, `${dir}/${name}.service`, unitText(svc));
     if (svc.enabled === 'enabled') {
@@ -379,9 +386,9 @@ function seedNetwork(sys) {
     },
     dns: {
       'repo.lab.example.com': '10.10.40.20', 'db01.lab.example.com': '10.10.40.30', 'web01.lab.example.com': '10.10.40.41',
-      'www.redhat.com': '23.215.0.136', 'access.redhat.com': '23.200.88.10', 'example.com': '93.184.215.14', 'ntp.lab.example.com': '10.10.40.3'
+      'www.redhat.com': '23.215.0.136', 'dl.flathub.org': '151.101.1.91', 'access.redhat.com': '23.200.88.10', 'example.com': '93.184.215.14', 'ntp.lab.example.com': '10.10.40.3'
     },
-    reachable: ['10.10.40.1', '10.10.40.2', '10.10.40.3', '10.10.40.20', '10.10.40.30', '10.10.40.41', '127.0.0.1', '23.215.0.136', '93.184.215.14', '8.8.8.8', '23.200.88.10'],
+    reachable: ['10.10.40.1', '10.10.40.2', '10.10.40.3', '10.10.40.20', '10.10.40.30', '10.10.40.41', '127.0.0.1', '23.215.0.136', '93.184.215.14', '8.8.8.8', '23.200.88.10', '151.101.1.91'],
     dnsServerUp: true,
     remotePorts: { '10.10.40.30': [22, 5432], '10.10.40.20': [22, 80, 443], '10.10.40.41': [22, 80, 443], '93.184.215.14': [80, 443], '23.215.0.136': [443] }
   };
@@ -456,7 +463,10 @@ function seedPackages(sys) {
     pkg('tuned', '2.25.1', '1.el10', 'A dynamic adaptive system tuning daemon', { files: ['/usr/sbin/tuned-adm'] }),
     pkg('audit', '4.0.3', '1.el10', 'User space tools for kernel auditing', { files: ['/sbin/auditd', '/usr/sbin/ausearch'] }),
     pkg('rsyslog', '8.2412.0', '1.el10', 'Enhanced system logging and kernel message trapping daemon', { files: ['/usr/sbin/rsyslogd'] }),
-    pkg('kernel', '6.12.0', '55.9.1.el10_0', 'The Linux kernel', { files: ['/boot/vmlinuz-6.12.0-55.9.1.el10_0.x86_64'] })
+    pkg('kernel', '6.12.0', '55.9.1.el10_0', 'The Linux kernel', { files: ['/boot/vmlinuz-6.12.0-55.9.1.el10_0.x86_64'] }),
+    pkg('lsof', '4.98.0', '6.el10', 'A utility which lists open files on a Linux/UNIX system', { files: ['/usr/bin/lsof'] }),
+    pkg('flatpak', '1.16.0', '2.el10', 'Application deployment framework for desktop apps', { repo: 'rhel-10-appstream', files: ['/usr/bin/flatpak'] }),
+    pkg('acl', '2.3.2', '1.el10', 'Access control list utilities', { files: ['/usr/bin/getfacl', '/usr/bin/setfacl'] })
   ];
   for (const p of installed) sys.packages.installed[p.name] = { ...p, installedAt: sys.bootTime };
   const avail = [
@@ -472,6 +482,8 @@ function seedPackages(sys) {
     pkg('bind-utils', '9.18.33', '1.el10', 'Utilities for querying DNS name servers', { repo: 'rhel-10-appstream', files: ['/usr/bin/dig', '/usr/bin/host', '/usr/bin/nslookup'], size: '220 k' }),
     pkg('tcpdump', '4.99.5', '1.el10', 'Command-line tool for monitoring network traffic', { repo: 'rhel-10-appstream', files: ['/usr/sbin/tcpdump'], size: '490 k' }),
     pkg('strace', '6.12', '1.el10', 'Tracks and displays system calls associated with a running process', { repo: 'rhel-10-baseos', files: ['/usr/bin/strace'], size: '1.4 M' }),
+    pkg('wget', '1.24.5', '5.el10', 'A utility for retrieving files using the HTTP or FTP protocols', { repo: 'rhel-10-appstream', files: ['/usr/bin/wget'], size: '780 k' }),
+    pkg('traceroute', '2.1.6', '1.el10', 'Traces the route taken by packets over an IPv4/IPv6 network', { repo: 'rhel-10-baseos', files: ['/usr/bin/traceroute'], size: '66 k' }),
     pkg('setroubleshoot-server', '3.3.35', '1.el10', 'SELinux troubleshoot server', { repo: 'rhel-10-appstream', files: ['/usr/bin/sealert'], size: '400 k' })
   ];
   for (const p of avail) sys.packages.available[p.name] = p;
